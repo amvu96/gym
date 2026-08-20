@@ -1,0 +1,8 @@
+[{
+      "relation": ["delegate_permission/common.handle_all_urls"],
+      "target": {
+        "namespace": "android_app",
+        "package_name": "eu.nullvault.gym.twa",
+        "sha256_cert_fingerprints": ["8E:57:E5:7B:B0:43:D2:28:E8:63:41:63:F4:A9:03:17:63:64:0A:8C:10:9A:55:29:D6:F3:ED:10:59:DA:5B:FB"]
+      }
+    }]
