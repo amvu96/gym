@@ -1884,36 +1884,156 @@ function renderProgressList(){
       ? sorted.map(e=>e.minWeight).filter(w=>w!==null)
       : sorted.map(e=>e.maxWeight).filter(w=>w!==null && w>0);
     const best = points.length ? (isAssisted ? Math.min(...points) : Math.max(...points)) : null;
-    const latest = sorted[sorted.length-1];
-    const spark = points.length>=2 ? buildSparkline(points.slice(-10), isAssisted) : '<span class="text-faint text-sm">Not enough data</span>';
     const displayBest = best!==null ? kgToDisplay(best) : null;
+    const bestLabel = isAssisted ? 'least assist' : 'best';
 
-    let best1RM = null;
-    if(!isAssisted){
-      const oneRMs = sorted.map(e=>estimate1RM(e.bestSetWeight, e.bestSetReps)).filter(v=>v!==null);
-      best1RM = oneRMs.length ? Math.max(...oneRMs) : null;
-    }
-
-    return `<div class="progress-ex-card">
-      <div class="progress-ex-header">
-        <h3>${v.name}</h3>
-        <span class="pill">${sorted.length} session${sorted.length!==1?'s':''}</span>
+    return `<div class="progress-ex-card" data-progress-ex="${exId}">
+      <div class="progress-ex-card-info">
+        <div class="progress-ex-header">
+          <h3>${v.name}</h3>
+        </div>
+        <div class="progress-ex-preview-row">
+          <span class="progress-ex-preview-stat">${sorted.length} session${sorted.length!==1?'s':''}</span>
+          ${displayBest!==null ? `<span class="progress-ex-preview-stat"><b class="num">${displayBest}${unitLabel()}</b> ${bestLabel}</span>` : ''}
+        </div>
       </div>
-      ${isAssisted ? `<div class="pill" style="margin-top:8px; color:var(--cyan); border-color:#3ad6ff40; background:#3ad6ff14;">
-        <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px;"><path d="M12 5v14M5 12l7 7 7-7"/></svg>
-        Lower assistance is better
-      </div>` : ''}
-      <div class="sparkline-row mt-8">${spark}<span class="sparkline-label">progression</span>${best1RM!==null?`<span class="one-rm-badge">~${kgToDisplay(Math.round(best1RM*10)/10)}${unitLabel()} 1RM</span>`:''}</div>
-      <div class="progress-ex-stats">
-        <div class="progress-ex-stat"><div class="v num">${displayBest!==null ? displayBest : '–'}</div><div class="l">${isAssisted ? 'Least assist' : 'Best'} ${unitLabel()}</div></div>
-        <div class="progress-ex-stat"><div class="v num">${latest.sets}</div><div class="l">Last sets</div></div>
-        <div class="progress-ex-stat"><div class="v num">${latest.totalReps}</div><div class="l">Last reps</div></div>
+      <div class="progress-ex-chevron">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
       </div>
     </div>`;
   }).join('');
+
+  container.querySelectorAll('[data-progress-ex]').forEach(card=>{
+    card.addEventListener('click', ()=>{
+      openExerciseProgressDetail(card.dataset.progressEx);
+    });
+  });
 }
 
 document.getElementById('progressSearchInput').addEventListener('input', renderProgressList);
+
+/* ---------------- OVERVIEW / EXERCISES TOGGLE ---------------- */
+document.getElementById('progressToggle').addEventListener('click', (e)=>{
+  const btn = e.target.closest('.progress-toggle-btn');
+  if(!btn) return;
+  const tab = btn.dataset.progressTab;
+  document.querySelectorAll('.progress-toggle-btn').forEach(b=>b.classList.toggle('active', b===btn));
+  document.getElementById('progressPanelOverview').style.display = tab==='overview' ? 'block' : 'none';
+  document.getElementById('progressPanelExercises').style.display = tab==='exercises' ? 'block' : 'none';
+});
+
+/* ---------------- EXERCISE PROGRESS DETAIL SHEET ---------------- */
+function openExerciseProgressDetail(exId){
+  const exDef = findExercise(exId);
+  if(!exDef) return;
+  const isAssisted = !!exDef.assisted;
+  const history = getExerciseHistory(exId); // sorted oldest -> newest, {date, maxWeight, minWeight, bestSetWeight, bestSetReps}
+
+  const content = document.getElementById('exerciseProgressContent');
+
+  if(history.length===0){
+    content.innerHTML = `
+      <div class="ex-progress-header">
+        <div class="ex-progress-title">${exDef.name}</div>
+      </div>
+      <div class="empty-state">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 3v18h18"/><path d="M18 8l-5 5-3-3-4 4"/></svg>
+        <p>No history for this exercise yet.</p>
+      </div>
+    `;
+    openSheet('sheetExerciseProgress');
+    return;
+  }
+
+  const points = isAssisted ? history.map(h=>h.minWeight) : history.map(h=>h.maxWeight).filter(w=>w>0);
+  const best = points.length ? (isAssisted ? Math.min(...points) : Math.max(...points)) : null;
+  const latest = history[history.length-1];
+
+  let best1RM = null;
+  if(!isAssisted){
+    const oneRMs = history.map(h=>estimate1RM(h.bestSetWeight, h.bestSetReps)).filter(v=>v!==null);
+    best1RM = oneRMs.length ? Math.max(...oneRMs) : null;
+  }
+
+  const bigChart = points.length>=2 ? buildBigProgressChart(history.map(h=>isAssisted?h.minWeight:h.maxWeight), isAssisted) : '';
+  const chartDates = history.slice(-12).map(h=>{
+    const d = parseISO(h.date);
+    return `${d.getDate()}/${d.getMonth()+1}`;
+  });
+
+  content.innerHTML = `
+    <div class="ex-progress-header">
+      <div class="ex-progress-title">${exDef.name}</div>
+      <div class="ex-progress-subtitle">${capitalize(exDef.muscle)} · ${history.length} session${history.length!==1?'s':''} logged</div>
+    </div>
+    ${isAssisted ? `<div class="pill mb-12" style="color:var(--cyan); border-color:#3ad6ff40; background:#3ad6ff14;">
+      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px;"><path d="M12 5v14M5 12l7 7 7-7"/></svg>
+      Lower assistance is better
+    </div>` : ''}
+    ${bigChart ? `<div class="ex-progress-big-chart">
+      ${bigChart}
+      <div class="ex-progress-chart-labels">
+        ${chartDates.length ? `<span>${chartDates[0]}</span><span>${chartDates[chartDates.length-1]}</span>` : ''}
+      </div>
+    </div>` : ''}
+    <div class="ex-progress-stat-grid">
+      <div class="stat-box"><div class="v num">${best!==null?kgToDisplay(best):'–'}${unitLabel()}</div><div class="l">${isAssisted?'Least assist':'Best'}</div></div>
+      <div class="stat-box"><div class="v num">${best1RM!==null?'~'+kgToDisplay(Math.round(best1RM*10)/10):'–'}${best1RM!==null?unitLabel():''}</div><div class="l">Est. 1RM</div></div>
+      <div class="stat-box"><div class="v num">${latest.bestSetReps||'–'}</div><div class="l">Last reps</div></div>
+    </div>
+    <h2 class="section-label">Session history</h2>
+    <div class="card" style="padding:2px 14px;">
+      ${[...history].reverse().map(h=>{
+        const d = parseISO(h.date);
+        const weightVal = isAssisted ? h.minWeight : h.maxWeight;
+        const displayW = weightVal!=null ? kgToDisplay(weightVal) : null;
+        return `<div class="ex-history-row">
+          <div class="ex-history-date">
+            <div class="d num">${d.getDate()}</div>
+            <div class="m">${d.toLocaleDateString(undefined,{month:'short'})}</div>
+          </div>
+          <div class="ex-history-sets">${h.bestSetWeight!=null?`${kgToDisplay(h.bestSetWeight)}${unitLabel()}${isAssisted?' assist':''} × ${h.bestSetReps}`:'–'}</div>
+          ${displayW!==null ? `<div class="ex-history-best num">${displayW}${unitLabel()}</div>` : ''}
+        </div>`;
+      }).join('')}
+    </div>
+  `;
+  openSheet('sheetExerciseProgress');
+}
+
+// Larger progress-page version of the sparkline: same up-good/down-good
+// inversion logic as buildSparkline, sized for the detail sheet.
+function buildBigProgressChart(points, invert){
+  const w=340, h=110, pad=8;
+  const min = Math.min(...points), max = Math.max(...points);
+  const range = (max-min)||1;
+  const trimmed = points.slice(-12); // keep the chart readable, most recent 12 sessions
+  const stepX = trimmed.length>1 ? (w-pad*2)/(trimmed.length-1) : 0;
+  const coords = trimmed.map((p,i)=>{
+    const x = pad+i*stepX;
+    const normalized = invert ? (max-p)/range : (p-min)/range;
+    const y = h-pad-normalized*(h-pad*2);
+    return [x,y];
+  });
+  const path = coords.map((c,i)=>(i===0?'M':'L')+c[0].toFixed(1)+' '+c[1].toFixed(1)).join(' ');
+  const areaPath = path + ` L${coords[coords.length-1][0].toFixed(1)} ${h-pad} L${coords[0][0].toFixed(1)} ${h-pad} Z`;
+  const color = invert ? '#3ad6ff' : '#39ff9a';
+  const lastPoint = coords[coords.length-1];
+  return `<svg viewBox="0 0 ${w} ${h}" width="${w}" height="${h}">
+    <defs>
+      <linearGradient id="progressChartFade" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0%" stop-color="${color}" stop-opacity="0.25"/>
+        <stop offset="100%" stop-color="${color}" stop-opacity="0"/>
+      </linearGradient>
+    </defs>
+    <path d="${areaPath}" fill="url(#progressChartFade)" stroke="none"/>
+    <path d="${path}" fill="none" stroke="${color}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>
+    ${coords.map((c,i)=>i===coords.length-1
+      ? `<circle cx="${c[0].toFixed(1)}" cy="${c[1].toFixed(1)}" r="4" fill="${color}"/>`
+      : `<circle cx="${c[0].toFixed(1)}" cy="${c[1].toFixed(1)}" r="2" fill="${color}" opacity="0.5"/>`
+    ).join('')}
+  </svg>`;
+}
 
 /* ---------------- SETTINGS ---------------- */
 function loadSettingsIntoForm(){
