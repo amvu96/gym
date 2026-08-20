@@ -260,15 +260,17 @@ function renderHome(){
 
 function renderTemplatesQuickRow(){
   const wrap = document.getElementById('templatesQuickRow');
-  const list = document.getElementById('templatesQuickList');
+  const carousel = document.getElementById('routineCarousel');
+  const dotsWrap = document.getElementById('routineCarouselDots');
   if(!state.templates || state.templates.length===0){
     wrap.style.display = 'none';
     return;
   }
   wrap.style.display = 'block';
   const sorted = [...state.templates].sort((a,b)=>b.createdAt-a.createdAt);
-  list.innerHTML = sorted.map(t=>`
-    <div class="template-item" data-template="${t.id}">
+
+  carousel.innerHTML = sorted.map(t=>`
+    <div class="routine-card" data-template="${t.id}">
       <div class="template-icon">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
       </div>
@@ -282,7 +284,12 @@ function renderTemplatesQuickRow(){
     </div>
   `).join('');
 
-  list.querySelectorAll('[data-delete-template]').forEach(btn=>{
+  // dots only make sense (and only need showing) when there's more than one
+  // routine to swipe between
+  dotsWrap.style.display = sorted.length>1 ? 'flex' : 'none';
+  dotsWrap.innerHTML = sorted.map((_,i)=>`<div class="routine-carousel-dot ${i===0?'active':''}" data-dot="${i}"></div>`).join('');
+
+  carousel.querySelectorAll('[data-delete-template]').forEach(btn=>{
     btn.addEventListener('click', (e)=>{
       e.stopPropagation();
       const id = e.currentTarget.dataset.deleteTemplate;
@@ -295,11 +302,25 @@ function renderTemplatesQuickRow(){
       }
     });
   });
-  list.querySelectorAll('.template-item').forEach(item=>{
+  carousel.querySelectorAll('.routine-card').forEach(item=>{
     item.addEventListener('click', ()=>{
       startWorkoutFromTemplate(item.dataset.template);
     });
   });
+
+  // update active dot as the user swipes, based on which card is currently
+  // most in view (scrollLeft / card width, rounded to nearest card)
+  carousel.onscroll = ()=>{
+    clearTimeout(carousel._scrollDebounce);
+    carousel._scrollDebounce = setTimeout(()=>{
+      const cardWidth = carousel.clientWidth;
+      if(cardWidth===0) return;
+      const activeIdx = Math.round(carousel.scrollLeft / cardWidth);
+      dotsWrap.querySelectorAll('.routine-carousel-dot').forEach((dot,i)=>{
+        dot.classList.toggle('active', i===activeIdx);
+      });
+    }, 60);
+  };
 }
 
 function startWorkoutFromTemplate(templateId){
@@ -611,7 +632,7 @@ function computeStreak(){
 
 function renderRecentSessions(){
   const list = document.getElementById('recentSessionsList');
-  const sorted = [...state.sessions].sort((a,b)=>b.date.localeCompare(a.date)).slice(0,8);
+  const sorted = [...state.sessions].sort((a,b)=>b.date.localeCompare(a.date)).slice(0,10);
   if(sorted.length===0){
     list.innerHTML = `<div class="empty-state">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M6 4v16M18 4v16M2 9h4M2 15h4M18 9h4M18 15h4M6 12h12"/></svg>
@@ -2257,6 +2278,32 @@ document.getElementById('sheetBackdrop').addEventListener('click', ()=>{
   document.body.classList.remove('sheet-open');
 });
 
+/* ---------------- VIDEO TUTORIAL MODAL ----------------
+   Opens above whatever sheet is currently showing (session detail, etc.)
+   without closing it, so dismissing the video returns right back to where
+   the user was. Uses YouTube's iframe embed — no API key needed.
+------------------------------------------------- */
+function openVideoModal(videoUrl){
+  const videoId = getYouTubeId(videoUrl);
+  if(!videoId) return;
+  const iframe = document.getElementById('videoModalIframe');
+  iframe.src = `https://www.youtube.com/embed/${videoId}?autoplay=1&rel=0`;
+  document.getElementById('videoModalBackdrop').classList.add('open');
+  document.getElementById('videoModal').classList.add('open');
+}
+
+function closeVideoModal(){
+  document.getElementById('videoModalBackdrop').classList.remove('open');
+  document.getElementById('videoModal').classList.remove('open');
+  // clear the iframe so playback actually stops (removing/hiding alone would
+  // leave audio playing in the background); about:blank is the correct way
+  // to do this — setting src='' resolves to the current page URL instead.
+  document.getElementById('videoModalIframe').src = 'about:blank';
+}
+
+document.getElementById('btnCloseVideoModal').addEventListener('click', closeVideoModal);
+document.getElementById('videoModalBackdrop').addEventListener('click', closeVideoModal);
+
 /* ---------------- SWIPE-DOWN-TO-DISMISS (generic, works on any .sheet via its handle) ---------------- */
 let sheetSwipe = null; // {sheetEl, startY, lastY, lastT, velocity}
 
@@ -2368,7 +2415,7 @@ function showSessionDetail(session){
   content.querySelectorAll('[data-video-thumb]').forEach(el=>{
     el.addEventListener('click', (e)=>{
       e.stopPropagation();
-      window.open(el.dataset.videoThumb, '_blank', 'noopener');
+      openVideoModal(el.dataset.videoThumb);
     });
   });
 
@@ -2441,35 +2488,4 @@ function renderSessionExerciseCard(ex){
   </div>`;
 }
 
-/* ---------------- SERVICE WORKER / PWA ---------------- */
-if('serviceWorker' in navigator){
-  window.addEventListener('load', ()=>{
-    navigator.serviceWorker.register('sw.js').catch(err=>console.warn('SW registration failed', err));
-  });
-}
-
-/* ---------------- INIT ---------------- */
-function init(){
-  const restored = loadActiveWorkout();
-  if(restored){
-    activeWorkout = restored;
-    startWorkoutTimer();
-  }
-  showView('home');
-  loadSettingsIntoForm();
-  waitForGymSyncThenInit();
-}
-
-function waitForGymSyncThenInit(attempts){
-  attempts = attempts || 0;
-  if(window.GymSync){
-    initCloudSync();
-    return;
-  }
-  if(attempts > 100) return; // give up after ~10s, sync module likely failed to load
-  setTimeout(()=>waitForGymSyncThenInit(attempts+1), 100);
-}
-
-init();
-
-})();
+/* -
