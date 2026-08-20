@@ -24,7 +24,8 @@ function defaultState(){
       bodyWeightKg: 75,
       weeklyGoal: 4,
       useLbs: false,
-      lastBackupAt: null
+      lastBackupAt: null,
+      notificationsEnabled: false
     },
     customExercises: [],
     templates: []           // {id, name, exIds:[...], createdAt}
@@ -889,16 +890,19 @@ let restTimer = {
   totalSeconds: 0,
   remainingSeconds: 0,
   intervalId: null,
-  audioCtx: null
+  audioCtx: null,
+  exerciseName: '',
+  notifyIntervalId: null
 };
 
-function startRestTimer(seconds){
+function startRestTimer(seconds, exerciseName){
   stopRestTimer(); // clear any existing one first
   primeAudioContext(); // must happen inside this user-gesture call stack so the
                         // browser allows audio playback later when the timer fires
   restTimer.active = true;
   restTimer.totalSeconds = seconds;
   restTimer.remainingSeconds = seconds;
+  restTimer.exerciseName = exerciseName || '';
   ensureRestTimerBar();
   renderRestTimerBar();
   restTimer.intervalId = setInterval(()=>{
@@ -911,6 +915,8 @@ function startRestTimer(seconds){
     }
     renderRestTimerBar();
   }, 1000);
+
+  notifyRestStarted(seconds, restTimer.exerciseName);
 }
 
 function primeAudioContext(){
@@ -926,7 +932,9 @@ function primeAudioContext(){
 
 function stopRestTimer(){
   if(restTimer.intervalId) clearInterval(restTimer.intervalId);
+  if(restTimer.notifyIntervalId) clearInterval(restTimer.notifyIntervalId);
   restTimer.intervalId = null;
+  restTimer.notifyIntervalId = null;
   restTimer.active = false;
   removeRestTimerBar();
 }
@@ -940,7 +948,9 @@ function addRestTime(deltaSeconds){
 
 function onRestTimerComplete(){
   clearInterval(restTimer.intervalId);
+  if(restTimer.notifyIntervalId) clearInterval(restTimer.notifyIntervalId);
   restTimer.intervalId = null;
+  restTimer.notifyIntervalId = null;
   playRestTimerAlert();
   const bar = document.getElementById('restTimerBar');
   if(bar) bar.classList.add('done');
@@ -948,6 +958,7 @@ function onRestTimerComplete(){
   if(title) title.textContent = 'Rest complete';
   const sub = document.getElementById('restTimerSub');
   if(sub) sub.textContent = 'Tap to dismiss';
+  notifyRestComplete(restTimer.exerciseName);
   // auto-dismiss a few seconds after completion if the user doesn't interact
   setTimeout(()=>{
     if(restTimer.active && restTimer.remainingSeconds<=0) stopRestTimer();
@@ -1036,6 +1047,80 @@ function playRestTimerAlert(){
   }
 }
 
+/* ---------------- REST TIMER NOTIFICATIONS ----------------
+   Free, local-only notifications via the Web Notifications API — no
+   server, no push service, no cost. Works while the app/tab is open or
+   briefly backgrounded (e.g. you switch to another app for a moment).
+   They will NOT fire if the browser/PWA process is fully closed/killed —
+   that requires a real push server, which is out of scope here.
+------------------------------------------------- */
+function notificationsEnabled(){
+  return state.settings.notificationsEnabled && 'Notification' in window && Notification.permission==='granted';
+}
+
+async function requestNotificationPermission(){
+  if(!('Notification' in window)){
+    toast('Notifications are not supported in this browser');
+    return false;
+  }
+  if(Notification.permission==='granted') return true;
+  if(Notification.permission==='denied'){
+    toast('Notifications are blocked — enable them in your browser/app settings');
+    return false;
+  }
+  const result = await Notification.requestPermission();
+  return result==='granted';
+}
+
+function fireNotification(title, body, tag){
+  if(!notificationsEnabled()) return;
+  // Route through the service worker registration when available so the
+  // notification is more likely to survive brief backgrounding, falling
+  // back to a plain Notification() if no SW registration is ready yet.
+  const options = {
+    body,
+    tag,               // same tag = replaces the previous notification instead of stacking
+    renotify: true,    // re-alert (vibrate/sound) even when replacing, so countdown updates are noticed
+    icon: './icons/icon-192.png',
+    badge: './icons/icon-192.png',
+    silent: false
+  };
+  if(navigator.serviceWorker && navigator.serviceWorker.ready){
+    navigator.serviceWorker.ready.then(reg=>{
+      reg.showNotification(title, options).catch(()=>{
+        try{ new Notification(title, options); }catch(e){}
+      });
+    });
+  } else {
+    try{ new Notification(title, options); }catch(e){}
+  }
+}
+
+function notifyRestStarted(seconds, exerciseName){
+  if(!notificationsEnabled()) return;
+  const label = exerciseName ? `Next: ${exerciseName}` : 'Get ready for your next set';
+  fireNotification(`Resting — ${formatElapsed(seconds*1000)}`, label, 'rest-timer');
+
+  // periodically refresh the notification with the remaining time, since a
+  // one-shot notification can't show a live-ticking countdown on its own
+  if(restTimer.notifyIntervalId) clearInterval(restTimer.notifyIntervalId);
+  restTimer.notifyIntervalId = setInterval(()=>{
+    if(!restTimer.active || restTimer.remainingSeconds<=0){
+      clearInterval(restTimer.notifyIntervalId);
+      restTimer.notifyIntervalId = null;
+      return;
+    }
+    const sub = exerciseName ? `Next: ${exerciseName}` : 'Get ready for your next set';
+    fireNotification(`Resting — ${formatElapsed(restTimer.remainingSeconds*1000)}`, sub, 'rest-timer');
+  }, 15000); // refresh every 15s; frequent enough to feel live, gentle on battery/OS rate limits
+}
+
+function notifyRestComplete(exerciseName){
+  if(!notificationsEnabled()) return;
+  const body = exerciseName ? `Time to start: ${exerciseName}` : 'Time for your next set';
+  fireNotification('Rest complete 💪', body, 'rest-timer');
+}
+
 function ensureFinishBar(){
   if(document.getElementById('finishBar')) return;
   const bar = document.createElement('div');
@@ -1086,7 +1171,8 @@ function attachWorkoutCardListeners(){
       const set = activeWorkout.exercises[exIdx].sets[setIdx];
       set.done = !set.done;
       if(set.done){
-        startRestTimer(activeWorkout.restDuration || 90);
+        const exerciseName = activeWorkout.exercises[exIdx].name;
+        startRestTimer(activeWorkout.restDuration || 90, exerciseName);
       }
       renderWorkoutView();
     });
@@ -2090,7 +2176,24 @@ function loadSettingsIntoForm(){
   document.getElementById('settingBodyWeight').value = state.settings.bodyWeightKg;
   document.getElementById('settingWeeklyGoal').value = state.settings.weeklyGoal;
   document.getElementById('toggleUnits').classList.toggle('on', state.settings.useLbs);
+  refreshNotificationsToggleUI();
   updateLastBackupLabel();
+}
+
+function refreshNotificationsToggleUI(){
+  const toggle = document.getElementById('toggleNotifications');
+  const sub = document.getElementById('notificationsStatusSub');
+  if(!toggle) return;
+  const supported = 'Notification' in window;
+  const isOn = state.settings.notificationsEnabled && supported && Notification.permission==='granted';
+  toggle.classList.toggle('on', isOn);
+  if(!supported){
+    sub.textContent = 'Not supported in this browser';
+  } else if(Notification.permission==='denied'){
+    sub.textContent = 'Blocked — enable in your browser/app settings';
+  } else {
+    sub.textContent = 'Get notified when rest starts and ends';
+  }
 }
 
 /* ---------------- CLOUD SYNC (Firebase) ---------------- */
@@ -2168,6 +2271,20 @@ document.getElementById('toggleUnits').addEventListener('click', (e)=>{
   e.target.classList.toggle('on', state.settings.useLbs);
   saveState();
   toast(state.settings.useLbs ? 'Switched to lbs' : 'Switched to kg');
+});
+
+document.getElementById('toggleNotifications').addEventListener('click', async ()=>{
+  const wantsOn = !state.settings.notificationsEnabled;
+  if(wantsOn){
+    const granted = await requestNotificationPermission();
+    state.settings.notificationsEnabled = granted;
+    if(granted) toast('Rest timer notifications on');
+  } else {
+    state.settings.notificationsEnabled = false;
+    toast('Rest timer notifications off');
+  }
+  saveState();
+  refreshNotificationsToggleUI();
 });
 
 function updateLastBackupLabel(){
