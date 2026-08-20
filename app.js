@@ -2506,6 +2506,9 @@ function renderSessionExerciseCard(ex){
       ${thumbHtml}
     </div>
     <table class="session-set-grid">
+      <colgroup>
+        <col class="col-num"><col class="col-weight"><col class="col-reps"><col class="col-effort">
+      </colgroup>
       <thead><tr><th>#</th><th>${unitLabel()}${isAssisted?' assist':''}</th><th>Reps</th><th>Effort</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
