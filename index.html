@@ -337,6 +337,38 @@ main{max-width:640px; margin:0 auto; padding:18px 16px 40px;}
 .template-delete svg{width:16px; height:16px;}
 .template-delete:active{color:var(--danger);}
 
+/* Routine carousel — horizontal swipe, one card per view via scroll-snap */
+.routine-carousel{
+  display:flex; overflow-x:auto; scroll-snap-type:x mandatory;
+  gap:10px; scrollbar-width:none; padding-bottom:2px;
+}
+.routine-carousel::-webkit-scrollbar{display:none;}
+.routine-card{
+  flex:0 0 100%; scroll-snap-align:start;
+  background:var(--panel); border:1px solid var(--border); border-radius:13px;
+  padding:16px; cursor:pointer; transition:border-color .15s, background .15s;
+  display:flex; align-items:center; gap:12px;
+}
+.routine-card:active{border-color:var(--accent-dim); background:var(--panel-raised);}
+.routine-card .template-icon{width:42px; height:42px;}
+.routine-card .template-icon svg{width:19px; height:19px;}
+.routine-card .template-info{flex:1; min-width:0;}
+.routine-card .template-title{font-size:14.5px; font-weight:700;}
+.routine-card .template-meta{font-size:12px; margin-top:2px;}
+.routine-carousel-dots{display:flex; justify-content:center; gap:6px; margin-top:10px;}
+.routine-carousel-dot{
+  width:6px; height:6px; border-radius:50%; background:var(--border);
+  transition:background .2s, width .2s;
+}
+.routine-carousel-dot.active{background:var(--accent); width:16px; border-radius:3px;}
+
+/* Recent sessions — fixed height showing ~3 rows, rest reachable by scroll */
+.recent-sessions-scroll{
+  background:var(--panel); border:1px solid var(--border); border-radius:16px;
+  padding:6px 14px; max-height:184px; overflow-y:auto;
+  overscroll-behavior:contain; -webkit-overflow-scrolling:touch;
+}
+
 /* ============ LOG / WORKOUT VIEW ============ */
 .active-session-bar{
   position:sticky; top:64px; z-index:30;
@@ -845,6 +877,34 @@ body.workout-active{padding-bottom:calc(96px + env(safe-area-inset-bottom));}
   flex-shrink:0; padding-top:12px;
 }
 
+/* Video tutorial modal — sits above sheets, centered, own backdrop */
+.video-modal-backdrop{
+  position:fixed; inset:0; background:rgba(0,0,0,0.8); z-index:95;
+  opacity:0; pointer-events:none; transition:opacity .2s;
+  backdrop-filter:blur(2px);
+}
+.video-modal-backdrop.open{opacity:1; pointer-events:auto;}
+.video-modal{
+  position:fixed; left:50%; top:50%; z-index:96;
+  transform:translate(-50%, -50%) scale(0.92); opacity:0;
+  pointer-events:none; transition:opacity .22s, transform .22s;
+  width:calc(100% - 32px); max-width:640px;
+}
+.video-modal.open{opacity:1; pointer-events:auto; transform:translate(-50%, -50%) scale(1);}
+.video-modal-frame-wrap{
+  position:relative; width:100%; padding-top:56.25%; /* 16:9 */
+  border-radius:14px; overflow:hidden; background:#000;
+  border:1px solid var(--border); box-shadow:0 20px 60px -12px rgba(0,0,0,0.7);
+}
+.video-modal-frame-wrap iframe{position:absolute; inset:0; width:100%; height:100%;}
+.video-modal-close{
+  position:absolute; top:-42px; right:0; width:34px; height:34px; border-radius:50%;
+  background:var(--panel); border:1px solid var(--border); color:var(--text);
+  display:flex; align-items:center; justify-content:center;
+}
+.video-modal-close svg{width:17px; height:17px;}
+.video-modal-close:active{background:var(--panel-raised);}
+
 .toast{
   position:fixed; bottom:calc(88px + env(safe-area-inset-bottom)); left:50%;
   transform:translateX(-50%) translateY(20px); z-index:99;
@@ -933,11 +993,12 @@ body.sheet-open{overflow:hidden;}
 
     <div id="templatesQuickRow" style="display:none;" class="mb-12">
       <h2 class="section-label">Routines</h2>
-      <div class="card" style="padding:6px 14px;" id="templatesQuickList"></div>
+      <div class="routine-carousel" id="routineCarousel"></div>
+      <div class="routine-carousel-dots" id="routineCarouselDots"></div>
     </div>
 
     <h2 class="section-label">Recent sessions</h2>
-    <div class="card" style="padding:6px 14px;" id="recentSessionsList">
+    <div class="recent-sessions-scroll" id="recentSessionsList">
       <!-- populated -->
     </div>
   </section>
@@ -1161,6 +1222,16 @@ body.sheet-open{overflow:hidden;}
 
 <!-- ===== Add exercise sheet ===== -->
 <div class="sheet-backdrop" id="sheetBackdrop"></div>
+
+<div class="video-modal-backdrop" id="videoModalBackdrop"></div>
+<div class="video-modal" id="videoModal">
+  <button class="video-modal-close" id="btnCloseVideoModal" aria-label="Close video">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+  </button>
+  <div class="video-modal-frame-wrap">
+    <iframe id="videoModalIframe" src="" title="Exercise tutorial" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+  </div>
+</div>
 
 <div class="sheet" id="sheetQuickWalk">
   <div class="sheet-handle-hitarea"><div class="sheet-handle"></div></div>
