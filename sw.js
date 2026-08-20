@@ -6,7 +6,7 @@
    imports from gstatic.com) are left alone entirely — never cached, always
    fetched normally, since caching third-party CDN code here isn't useful. */
 
-const CACHE_NAME = 'gym-tracker-cache-v16';
+const CACHE_NAME = 'gym-tracker-cache-v6';
 const ASSETS = [
   './',
   './index.html',
@@ -52,5 +52,19 @@ self.addEventListener('fetch', (event) => {
         return response;
       })
       .catch(() => caches.match(event.request)) // offline fallback to last cached copy
+  );
+});
+
+// Tapping a rest-timer (or other local) notification should bring the app
+// to the foreground instead of just dismissing it.
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  event.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clients) => {
+      for (const client of clients) {
+        if ('focus' in client) return client.focus();
+      }
+      if (self.clients.openWindow) return self.clients.openWindow('./index.html');
+    })
   );
 });
