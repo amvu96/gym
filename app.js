@@ -1919,7 +1919,7 @@ document.getElementById('progressToggle').addEventListener('click', (e)=>{
   const tab = btn.dataset.progressTab;
   document.querySelectorAll('.progress-toggle-btn').forEach(b=>b.classList.toggle('active', b===btn));
   document.getElementById('progressPanelOverview').style.display = tab==='overview' ? 'block' : 'none';
-  document.getElementById('progressPanelExercises').style.display = tab==='exercises' ? 'block' : 'none';
+  document.getElementById('progressPanelExercises').style.display = tab==='exercises' ? 'flex' : 'none';
 });
 
 /* ---------------- EXERCISE PROGRESS DETAIL SHEET ---------------- */
