@@ -2287,7 +2287,13 @@ function openVideoModal(videoUrl){
   const videoId = getYouTubeId(videoUrl);
   if(!videoId) return;
   const iframe = document.getElementById('videoModalIframe');
-  iframe.src = `https://www.youtube.com/embed/${videoId}?autoplay=1&rel=0`;
+  // youtube-nocookie.com instead of youtube.com: on Android (especially
+  // inside a TWA), Chrome/WebView has a registered app-link intent for
+  // youtube.com and will hand the embed off to the YouTube app instead of
+  // rendering it inline, even inside an iframe. The nocookie domain isn't
+  // covered by that intent filter, so it stays in-page as intended.
+  // playsinline=1 reinforces the same "don't take over" behavior on iOS.
+  iframe.src = `https://www.youtube-nocookie.com/embed/${videoId}?autoplay=1&rel=0&playsinline=1`;
   document.getElementById('videoModalBackdrop').classList.add('open');
   document.getElementById('videoModal').classList.add('open');
 }
