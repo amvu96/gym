@@ -619,6 +619,22 @@ body.workout-active{padding-bottom:calc(96px + env(safe-area-inset-bottom));}
 .progress-toggle-btn.active{background:var(--accent-dim); color:var(--accent);}
 .progress-panel{animation:fadein .2s ease;}
 
+/* Exercises panel: search bar fixed at top, only the list itself scrolls.
+   Height is the full viewport minus: the panel's own top offset (sticky
+   header + main's top padding), main's bottom padding, and the space
+   reserved at the bottom of body for the floating tabbar. Using dvh keeps
+   this accurate on mobile browsers that show/hide chrome while scrolling. */
+#progressPanelExercises{
+  display:flex; flex-direction:column;
+  height:calc(100dvh - 146px - 40px - 100px);
+}
+#progressPanelExercises .field{flex-shrink:0;}
+.progress-list-scroll{
+  flex:1; min-height:0; overflow-y:auto;
+  overscroll-behavior:contain;
+  -webkit-overflow-scrolling:touch;
+}
+
 .progress-summary-grid{
   display:grid; grid-template-columns:repeat(2,1fr); gap:8px; margin-bottom:16px;
 }
@@ -961,7 +977,9 @@ body.sheet-open{overflow:hidden;}
       <div class="field" style="margin-bottom:16px;">
         <input type="text" id="progressSearchInput" placeholder="Search an exercise…" autocomplete="off">
       </div>
-      <div id="progressList"></div>
+      <div class="progress-list-scroll">
+        <div id="progressList"></div>
+      </div>
     </div>
   </section>
 
