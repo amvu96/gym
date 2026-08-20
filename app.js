@@ -2296,12 +2296,20 @@ document.getElementById('toggleNotifications').addEventListener('click', async (
    works because the app is packaged as a TWA with a real Android package
    name — a plain website has no package to target and can't do this at all.
 ------------------------------------------------- */
-const ANDROID_TWA_PACKAGE_NAME = 'eu.nullvault.gym.twa'; // e.g. 'eu.nullvault.gymtracker'
+const ANDROID_TWA_PACKAGE_NAME = 'eu.nullvault.gym.twa';
 
 function isLikelyAndroidTWA(){
   const isAndroid = /Android/i.test(navigator.userAgent);
-  const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.matchMedia('(display-mode: fullscreen)').matches;
-  return isAndroid && isStandalone;
+  if(!isAndroid) return false;
+  // The reliable, TWA-specific signal: when a Trusted Web Activity launches
+  // its page, Chrome sets document.referrer to "android-app://<package>".
+  // display-mode:standalone/fullscreen was tried here first but is NOT
+  // reliable inside a real TWA — multiple confirmed reports of it evaluating
+  // false even when genuinely running inside one — so it's kept only as a
+  // secondary fallback for a plain "installed PWA" (not packaged as a TWA).
+  const isTwaReferrer = document.referrer.startsWith('android-app://');
+  const isStandaloneFallback = window.matchMedia('(display-mode: standalone)').matches || window.matchMedia('(display-mode: fullscreen)').matches;
+  return isTwaReferrer || isStandaloneFallback;
 }
 
 const batteryRow = document.getElementById('btnBatterySettingsRow');
