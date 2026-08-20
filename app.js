@@ -133,12 +133,23 @@ function estimateSetKcal(met, bodyWeightKg, seconds){
   return met * 3.5 * bodyWeightKg / 200 * minutes;
 }
 
-function estimateStrengthExerciseKcal(exercise, sets, bodyWeightKg){
+function estimateStrengthExerciseKcal(exercise, sets, bodyWeightKg, restSeconds){
   const met = exercise.met || 4.5;
   // Count any set with logged weight or reps as one unit of work, not just
   // ones explicitly checked "done" — checking off a set is optional, so kcal
   // shouldn't depend on it.
-  const workSeconds = sets.filter(s=>s.done || s.weight || s.reps).length * 35; // ~35s time-under-tension per set
+  const completedSets = sets.filter(s=>s.done || s.weight || s.reps).length;
+  // MET values for resistance training (per the Compendium of Physical
+  // Activities) are measured across a full session INCLUDING rest between
+  // sets, not just active lifting time — a "6.0 MET" barbell row already
+  // has typical rest periods baked into that average. Applying the MET to
+  // only ~30s of active time per set (ignoring the rest that comes with it)
+  // understates real energy expenditure substantially. Use the session's
+  // actual configured rest duration (falls back to 90s, the app default)
+  // plus a representative ~30s of active lifting time per set.
+  const activeSecondsPerSet = 30;
+  const secondsPerSet = activeSecondsPerSet + (restSeconds!=null ? restSeconds : 90);
+  const workSeconds = completedSets * secondsPerSet;
   return estimateSetKcal(met, bodyWeightKg, workSeconds);
 }
 
@@ -1246,7 +1257,7 @@ function finishWorkout(){
     }
 
     const def = findExercise(ex.exId) || {met:4.5};
-    const kcal = estimateStrengthExerciseKcal(def, ex.sets, bodyWeightKg);
+    const kcal = estimateStrengthExerciseKcal(def, ex.sets, bodyWeightKg, (activeWorkout.restDuration||90));
     totalKcal += kcal;
     return {
       exId: ex.exId,
