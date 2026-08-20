@@ -2488,4 +2488,35 @@ function renderSessionExerciseCard(ex){
   </div>`;
 }
 
-/* -
+/* ---------------- SERVICE WORKER / PWA ---------------- */
+if('serviceWorker' in navigator){
+  window.addEventListener('load', ()=>{
+    navigator.serviceWorker.register('sw.js').catch(err=>console.warn('SW registration failed', err));
+  });
+}
+
+/* ---------------- INIT ---------------- */
+function init(){
+  const restored = loadActiveWorkout();
+  if(restored){
+    activeWorkout = restored;
+    startWorkoutTimer();
+  }
+  showView('home');
+  loadSettingsIntoForm();
+  waitForGymSyncThenInit();
+}
+
+function waitForGymSyncThenInit(attempts){
+  attempts = attempts || 0;
+  if(window.GymSync){
+    initCloudSync();
+    return;
+  }
+  if(attempts > 100) return; // give up after ~10s, sync module likely failed to load
+  setTimeout(()=>waitForGymSyncThenInit(attempts+1), 100);
+}
+
+init();
+
+})();
