@@ -1,0 +1,1066 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Gym Tracker</title>
+<meta name="description" content="Track gym sessions, sets, calories, and progress.">
+<meta name="theme-color" content="#0a0e0f">
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="./icons/icon-192.png" type="image/png">
+<link rel="apple-touch-icon" href="./icons/apple-touch-icon.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+/* ============ TOKENS ============ */
+:root{
+  --bg:#0a0e0f;
+  --panel:#11171a;
+  --panel-raised:#141c1f;
+  --border:#1f2b2e;
+  --border-soft:#182124;
+  --text:#d7e5e2;
+  --text-muted:#6b8079;
+  --text-faint:#4a5c57;
+  --accent:#39ff9a;
+  --accent-dim:#39ff9a2e;
+  --accent-glow:#39ff9a17;
+  --neon-dim:#1f8f5c;
+  --cyan:#3ad6ff;
+  --cyan-dim:#3ad6ff22;
+  --positive:#39ff9a;
+  --positive-dim:#39ff9a1f;
+  --warning:#3ad6ff;
+  --danger:#ff5f6d;
+  --danger-dim:#ff5f6d1f;
+  --input-bg:#080b0c;
+  --radius-sm:6px;
+  --radius-md:10px;
+  --radius-lg:14px;
+  --shadow-lift:0 8px 24px -8px rgba(0,0,0,0.6);
+  --font-ui:'JetBrains Mono','SF Mono',ui-monospace,Menlo,monospace;
+}
+
+*{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+html{min-height:100%; overscroll-behavior:none;}
+body{
+  margin:0;
+  min-height:100%;
+  background:
+    radial-gradient(ellipse 900px 600px at 50% -10%, #0e1416 0%, #060809 60%),
+    var(--bg);
+  background-attachment:fixed;
+  color:var(--text);
+  font-family:var(--font-ui);
+  font-size:14.5px;
+  line-height:1.5;
+  -webkit-font-smoothing:antialiased;
+  overscroll-behavior:none;
+  padding-bottom:calc(100px + env(safe-area-inset-bottom));
+}
+.num{font-variant-numeric:tabular-nums; font-feature-settings:"tnum" 1;}
+h1,h2,h3{margin:0; font-weight:700; letter-spacing:-0.01em;}
+p{margin:0;}
+button{font-family:inherit; cursor:pointer;}
+input,select,textarea{font-family:inherit; font-size:16px;}
+::selection{background:var(--accent-dim); color:var(--accent);}
+a{color:inherit;}
+
+@media (prefers-reduced-motion: reduce){
+  *{animation-duration:0.01ms !important; transition-duration:0.01ms !important;}
+}
+
+/* ============ LAYOUT SHELL ============ */
+.app-header{
+  position:sticky; top:0; z-index:40;
+  background:rgba(8,11,12,0.88);
+  backdrop-filter:blur(16px) saturate(140%);
+  border-bottom:1px solid var(--border-soft);
+  padding:16px 20px calc(14px + env(safe-area-inset-top)) 20px;
+  padding-top:calc(16px + env(safe-area-inset-top));
+  display:flex; align-items:center; justify-content:space-between;
+}
+.brand{display:flex; align-items:center; gap:10px;}
+.brand-mark{
+  width:26px; height:26px; border-radius:6px;
+  background:var(--input-bg);
+  border:1px solid var(--accent-dim);
+  box-shadow:0 0 12px -2px var(--accent-glow);
+  display:flex; align-items:center; justify-content:center;
+  flex-shrink:0;
+}
+.brand-mark svg{width:14px; height:14px;}
+.brand-name{font-size:13.5px; font-weight:700; letter-spacing:-0.01em; text-transform:lowercase;}
+.brand-name .dim{color:var(--text-faint); font-weight:500;}
+.header-actions{display:flex; gap:8px;}
+.icon-btn{
+  width:34px; height:34px; border-radius:8px;
+  background:var(--panel); border:1px solid var(--border);
+  display:flex; align-items:center; justify-content:center;
+  color:var(--text-muted);
+  transition:background .15s, color .15s, border-color .15s;
+}
+.icon-btn:active{background:var(--panel-raised); border-color:var(--accent-dim); color:var(--accent);}
+.icon-btn svg{width:17px; height:17px;}
+
+main{max-width:640px; margin:0 auto; padding:18px 16px 40px;}
+.view{display:none; animation:fadein .25s ease;}
+.view.active{display:block;}
+@keyframes fadein{from{opacity:0; transform:translateY(4px);} to{opacity:1; transform:translateY(0);}}
+
+/* ============ BOTTOM NAV ============ */
+.tabbar{
+  position:fixed; bottom:0; left:0; right:0; z-index:50;
+  display:flex; justify-content:center;
+  padding:0 14px calc(14px + env(safe-area-inset-bottom));
+  pointer-events:none;
+}
+.tabbar-inner{
+  pointer-events:auto;
+  width:100%; max-width:460px;
+  background:rgba(15,19,21,0.86);
+  backdrop-filter:blur(22px) saturate(160%);
+  border:1px solid var(--border-soft);
+  border-radius:22px;
+  box-shadow:0 12px 32px -8px rgba(0,0,0,0.55), inset 0 1px 0 rgba(255,255,255,0.03);
+  display:flex; align-items:center;
+  padding:6px 6px;
+}
+.tab-btn{
+  flex:1; background:none; border:none; color:var(--text-faint);
+  display:flex; flex-direction:column; align-items:center; gap:3px;
+  padding:9px 2px 8px; font-size:9px; font-weight:600;
+  letter-spacing:0.02em; text-transform:uppercase;
+  transition:color .18s;
+  position:relative;
+  min-width:0;
+  border-radius:14px;
+}
+.tab-btn svg{width:19px; height:19px; transition:transform .18s; flex-shrink:0;}
+.tab-btn.active{color:var(--accent);}
+.tab-btn.active::before{
+  content:''; position:absolute; top:2px; left:50%; transform:translateX(-50%);
+  width:16px; height:2px; background:var(--accent);
+  border-radius:99px;
+  box-shadow:0 0 8px var(--accent);
+}
+.tab-btn.active svg{transform:translateY(-1px); filter:drop-shadow(0 0 4px var(--accent-glow));}
+.tab-btn:active{background:rgba(255,255,255,0.04);}
+.tab-btn:active svg{transform:scale(0.9);}
+
+.tab-fab-slot{
+  flex:0 0 auto; width:56px; display:flex; align-items:center; justify-content:center;
+  position:relative;
+}
+.tab-fab{
+  width:52px; height:52px; border-radius:50%; border:none;
+  background:linear-gradient(155deg, var(--accent), #22c97a);
+  color:#04140b;
+  display:flex; align-items:center; justify-content:center;
+  position:relative; top:-16px;
+  box-shadow:0 6px 18px -4px var(--accent-glow), 0 0 0 5px var(--bg), 0 2px 6px rgba(0,0,0,0.4);
+  transition:transform .15s, box-shadow .15s;
+}
+.tab-fab svg{width:24px; height:24px;}
+.tab-fab:active{transform:scale(0.93); box-shadow:0 3px 10px -2px var(--accent-glow), 0 0 0 5px var(--bg);}
+.tab-fab.active-session{
+  background:linear-gradient(155deg, #ff8a3d, #ff5c5c);
+  box-shadow:0 6px 18px -4px #ff5c5c55, 0 0 0 5px var(--bg), 0 2px 6px rgba(0,0,0,0.4);
+  animation:fab-pulse 2.2s ease-in-out infinite;
+}
+@keyframes fab-pulse{
+  0%,100%{box-shadow:0 6px 18px -4px #ff5c5c55, 0 0 0 5px var(--bg), 0 2px 6px rgba(0,0,0,0.4);}
+  50%{box-shadow:0 6px 22px -2px #ff5c5c88, 0 0 0 5px var(--bg), 0 2px 6px rgba(0,0,0,0.4);}
+}
+
+/* ============ PRIMITIVES ============ */
+.card{
+  background:var(--panel);
+  border:1px solid var(--border);
+  border-radius:var(--radius-lg);
+  padding:18px;
+}
+.section-label{
+  font-size:10.5px; font-weight:700; text-transform:uppercase;
+  letter-spacing:0.1em; color:var(--cyan);
+  margin:0 0 10px 2px;
+  opacity:0.85;
+}
+.section-label::before{content:'// ';}
+.btn{
+  display:inline-flex; align-items:center; justify-content:center; gap:6px;
+  padding:12px 18px; border-radius:8px; border:none;
+  font-weight:700; font-size:13.5px; letter-spacing:0.01em;
+  text-transform:uppercase;
+  transition:transform .1s, opacity .15s, background .15s, box-shadow .15s;
+  font-family:var(--font-ui);
+}
+.btn:active{transform:scale(0.97);}
+.btn-primary{background:var(--accent); color:#04140b; box-shadow:0 0 0 1px var(--accent), 0 0 18px -4px var(--accent-glow);}
+.btn-primary:active{box-shadow:0 0 0 1px var(--accent), 0 0 8px -2px var(--accent-glow);}
+.btn-secondary{background:var(--panel-raised); color:var(--text); border:1px solid var(--border);}
+.btn-ghost{background:transparent; color:var(--text-muted); border:1px solid var(--border);}
+.btn-danger{background:var(--danger-dim); color:var(--danger); border:1px solid #ff5f6d40;}
+.btn-block{width:100%;}
+.btn-sm{padding:8px 14px; font-size:12px; border-radius:7px;}
+.btn:disabled{opacity:0.4; pointer-events:none;}
+
+.field{margin-bottom:14px;}
+.field label{
+  display:block; font-size:11.5px; font-weight:600; color:var(--cyan);
+  margin-bottom:6px; letter-spacing:0.02em; text-transform:uppercase; opacity:0.8;
+}
+.field input, .field select, .field textarea{
+  width:100%; background:var(--input-bg); border:1px solid var(--border);
+  color:var(--text); border-radius:7px; padding:11px 13px;
+  outline:none; transition:border-color .15s, box-shadow .15s;
+}
+.field input:focus, .field select:focus, .field textarea:focus{border-color:var(--accent); box-shadow:0 0 0 1px var(--accent-dim);}
+.field-row{display:flex; gap:10px;}
+.field-row .field{flex:1;}
+
+.pill{
+  display:inline-flex; align-items:center; padding:4px 10px;
+  border-radius:5px; font-size:11px; font-weight:600;
+  background:var(--panel-raised); color:var(--text-muted); border:1px solid var(--border);
+  text-transform:uppercase; letter-spacing:0.03em;
+}
+.pill-accent{background:var(--accent-glow); color:var(--accent); border-color:var(--accent-dim);}
+.pill-positive{background:var(--positive-dim); color:var(--positive); border-color:#39ff9a38;}
+
+.empty-state{
+  text-align:center; padding:44px 20px; color:var(--text-faint);
+}
+.empty-state svg{width:38px; height:38px; margin-bottom:12px; opacity:0.5;}
+.empty-state p{font-size:13px; max-width:260px; margin:0 auto;}
+.empty-state p::before{content:'> '; color:var(--neon-dim);}
+
+/* ============ TODAY / HOME VIEW ============ */
+.today-hero{
+  border-radius:var(--radius-lg);
+  padding:22px 20px;
+  background:var(--panel);
+  border:1px solid var(--border);
+  margin-bottom:16px;
+  position:relative; overflow:hidden;
+}
+.today-hero::before{
+  content:''; position:absolute; top:-60%; right:-30%;
+  width:280px; height:280px; border-radius:50%;
+  background:radial-gradient(circle,var(--accent-glow),transparent 70%);
+  pointer-events:none;
+}
+.today-hero::after{
+  content:''; position:absolute; inset:0; pointer-events:none;
+  background:linear-gradient(var(--border-soft) 1px, transparent 1px);
+  background-size:100% 3px; opacity:0.06;
+}
+.today-date{font-size:11px; color:var(--cyan); font-weight:600; margin-bottom:4px; text-transform:uppercase; letter-spacing:0.05em;}
+.today-status{font-size:20px; font-weight:700; letter-spacing:-0.01em; margin-bottom:14px;}
+.streak-row{display:flex; align-items:center; gap:8px; margin-bottom:16px;}
+.streak-flame{width:14px; height:14px; color:var(--accent); filter:drop-shadow(0 0 4px var(--accent-glow));}
+.streak-text{font-size:12.5px; color:var(--text-muted);}
+.streak-text b{color:var(--accent); font-weight:700;}
+
+.stat-grid{display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-bottom:14px;}
+.stat-box{
+  background:var(--panel-raised); border:1px solid var(--border-soft);
+  border-radius:9px; padding:12px 10px; text-align:center;
+}
+.stat-box .v{font-size:18px; font-weight:700; letter-spacing:-0.01em;}
+.stat-box .l{font-size:9.5px; color:var(--text-faint); text-transform:uppercase; letter-spacing:0.05em; margin-top:2px; font-weight:600;}
+
+.quick-actions{display:flex; gap:10px; margin-bottom:24px;}
+.quick-actions .btn{flex:1;}
+
+/* Weekly volume ring */
+.week-ring-wrap{display:flex; align-items:center; gap:16px;}
+.week-ring{position:relative; width:76px; height:76px; flex-shrink:0;}
+.week-ring svg{transform:rotate(-90deg);}
+.week-ring .bg-ring{stroke:var(--border);}
+.week-ring .fg-ring{stroke:var(--accent); stroke-linecap:round; transition:stroke-dashoffset .6s ease;}
+.week-ring-label{
+  position:absolute; inset:0; display:flex; flex-direction:column;
+  align-items:center; justify-content:center;
+}
+.week-ring-label .n{font-size:16px; font-weight:700; color:var(--accent);}
+.week-ring-label .u{font-size:8px; color:var(--text-faint); text-transform:uppercase; letter-spacing:.04em;}
+.week-days{display:flex; gap:5px; flex:1;}
+.week-day{
+  flex:1; aspect-ratio:1; border-radius:6px;
+  background:var(--panel-raised); border:1px solid var(--border-soft);
+  display:flex; align-items:center; justify-content:center;
+  font-size:10px; color:var(--text-faint); font-weight:700;
+  position:relative;
+}
+.week-day.done{background:var(--accent-dim); border-color:var(--accent); color:var(--accent);}
+.week-day.today{box-shadow:0 0 0 2px var(--accent-dim);}
+
+/* Recent sessions list */
+.session-item{
+  display:flex; align-items:center; gap:12px;
+  padding:13px 4px; border-bottom:1px solid var(--border-soft);
+}
+.session-item:last-child{border-bottom:none;}
+.session-date-badge{
+  width:42px; height:42px; border-radius:8px; background:var(--panel-raised);
+  border:1px solid var(--border); flex-shrink:0;
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+}
+.session-date-badge .d{font-size:14px; font-weight:700; line-height:1.1;}
+.session-date-badge .m{font-size:8.5px; color:var(--text-faint); text-transform:uppercase; font-weight:700;}
+.session-info{flex:1; min-width:0;}
+.session-title{font-size:13.5px; font-weight:600; margin-bottom:2px;}
+.session-meta{font-size:11.5px; color:var(--text-faint);}
+.session-kcal{font-size:13px; font-weight:700; color:var(--accent); white-space:nowrap;}
+.session-item{cursor:pointer;}
+.session-item:active{background:var(--panel-raised);}
+
+.template-item{
+  display:flex; align-items:center; gap:12px;
+  padding:13px 4px; border-bottom:1px solid var(--border-soft);
+  cursor:pointer;
+}
+.template-item:last-child{border-bottom:none;}
+.template-item:active{background:var(--panel-raised);}
+.template-icon{
+  width:38px; height:38px; border-radius:8px; flex-shrink:0;
+  background:var(--accent-glow); border:1px solid var(--accent-dim);
+  display:flex; align-items:center; justify-content:center; color:var(--accent);
+}
+.template-icon svg{width:17px; height:17px;}
+.template-info{flex:1; min-width:0;}
+.template-title{font-size:13.5px; font-weight:600;}
+.template-meta{font-size:11.5px; color:var(--text-faint); margin-top:1px;}
+.template-delete{color:var(--text-faint); background:none; border:none; padding:6px; flex-shrink:0;}
+.template-delete svg{width:16px; height:16px;}
+.template-delete:active{color:var(--danger);}
+
+/* ============ LOG / WORKOUT VIEW ============ */
+.active-session-bar{
+  position:sticky; top:64px; z-index:30;
+  background:var(--panel); color:var(--accent);
+  border:1px solid var(--accent-dim);
+  border-radius:10px; padding:12px 16px;
+  display:flex; align-items:center; justify-content:space-between;
+  margin-bottom:16px; box-shadow:0 0 20px -8px var(--accent-glow);
+}
+.active-session-bar .l{font-size:13px; font-weight:700;}
+.active-session-bar .t{font-size:11.5px; color:var(--text-muted);}
+
+.rest-config-row{
+  display:flex; align-items:center; justify-content:space-between;
+  gap:10px; margin-bottom:16px; flex-wrap:wrap;
+}
+.rest-config-label{font-size:11.5px; color:var(--text-faint); font-weight:600; text-transform:uppercase; letter-spacing:0.03em; white-space:nowrap;}
+.rest-chip-group{display:flex; gap:6px; flex-wrap:wrap;}
+.rest-chip{
+  padding:6px 12px; border-radius:99px; font-size:12px; font-weight:700;
+  background:var(--panel); border:1px solid var(--border); color:var(--text-muted);
+  transition:background .15s, color .15s, border-color .15s;
+}
+.rest-chip.active{background:var(--accent-dim); color:var(--accent); border-color:var(--accent);}
+
+.rest-timer-bar{
+  position:fixed; z-index:46;
+  bottom:calc(96px + env(safe-area-inset-bottom));
+  left:50%; transform:translateX(-50%);
+  width:calc(100% - 32px); max-width:608px;
+  background:var(--panel); border:1px solid var(--accent);
+  border-radius:16px; padding:14px 16px;
+  display:flex; align-items:center; gap:14px;
+  box-shadow:0 10px 28px -6px rgba(0,0,0,0.55), 0 0 20px -6px var(--accent-glow);
+  animation:rest-timer-in .25s cubic-bezier(.32,.72,0,1);
+}
+@keyframes rest-timer-in{
+  from{opacity:0; transform:translateX(-50%) translateY(12px);}
+  to{opacity:1; transform:translateX(-50%) translateY(0);}
+}
+.rest-timer-ring{position:relative; width:48px; height:48px; flex-shrink:0;}
+.rest-timer-ring svg{transform:rotate(-90deg);}
+.rest-timer-ring .bg-ring{stroke:var(--border);}
+.rest-timer-ring .fg-ring{stroke:var(--accent); stroke-linecap:round; transition:stroke-dashoffset 1s linear;}
+.rest-timer-ring-label{
+  position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+  font-size:13px; font-weight:700; font-variant-numeric:tabular-nums;
+}
+.rest-timer-info{flex:1; min-width:0;}
+.rest-timer-title{font-size:13px; font-weight:700; color:var(--text);}
+.rest-timer-sub{font-size:11px; color:var(--text-faint); margin-top:1px;}
+.rest-timer-actions{display:flex; gap:6px; flex-shrink:0;}
+.rest-timer-btn{
+  width:34px; height:34px; border-radius:9px; background:var(--panel-raised);
+  border:1px solid var(--border); color:var(--text-muted);
+  display:flex; align-items:center; justify-content:center;
+}
+.rest-timer-btn:active{border-color:var(--accent-dim); color:var(--accent);}
+.rest-timer-btn svg{width:16px; height:16px;}
+.rest-timer-bar.done{border-color:var(--positive); box-shadow:0 10px 28px -6px rgba(0,0,0,0.55), 0 0 20px -6px var(--positive-dim);}
+.rest-timer-bar.done .rest-timer-ring .fg-ring{stroke:var(--positive);}
+.rest-timer-bar.done .rest-timer-ring-label{color:var(--positive);}
+.rest-timer-bar.done .rest-timer-title{color:var(--positive);}
+
+.exercise-picker-search{margin-bottom:14px;}
+.exercise-picker-search input{
+  width:100%; background:var(--input-bg); border:1px solid var(--border);
+  color:var(--text); border-radius:8px; padding:12px 14px;
+  outline:none; transition:border-color .15s, box-shadow .15s;
+  font-size:14px;
+}
+.exercise-picker-search input::placeholder{color:var(--text-faint);}
+.exercise-picker-search input:focus{border-color:var(--accent); box-shadow:0 0 0 1px var(--accent-dim);}
+.muscle-filter-scroll{
+  display:flex; gap:7px; overflow-x:auto; padding-bottom:4px; margin-bottom:14px;
+  scrollbar-width:none;
+}
+.muscle-filter-scroll::-webkit-scrollbar{display:none;}
+.chip{
+  flex-shrink:0; padding:7px 13px; border-radius:6px; font-size:11.5px; font-weight:600;
+  background:var(--panel); border:1px solid var(--border); color:var(--text-muted);
+  white-space:nowrap; transition:background .15s,color .15s,border-color .15s;
+  text-transform:uppercase; letter-spacing:0.02em;
+}
+.chip.active{background:var(--accent-dim); color:var(--accent); border-color:var(--accent);}
+
+.exercise-list-item{
+  display:flex; align-items:center; gap:12px;
+  padding:13px 14px; background:var(--panel); border:1px solid var(--border);
+  border-radius:10px; margin-bottom:8px; transition:border-color .15s;
+}
+.exercise-list-item:active{border-color:var(--accent-dim);}
+.ex-icon{
+  width:38px; height:38px; border-radius:8px; flex-shrink:0;
+  background:var(--panel-raised); display:flex; align-items:center; justify-content:center;
+  font-size:16px; border:1px solid var(--border-soft);
+}
+.ex-info{flex:1; min-width:0;}
+.ex-name{font-size:14px; font-weight:600;}
+.ex-meta{font-size:11px; color:var(--text-faint); margin-top:1px; text-transform:uppercase; letter-spacing:0.02em;}
+.ex-last-perf{font-size:11.5px; color:var(--accent); margin-top:3px; font-weight:600; opacity:0.85;}
+.ex-add-btn{
+  width:30px; height:30px; border-radius:7px; background:var(--accent-glow);
+  border:1px solid var(--accent-dim); color:var(--accent); display:flex; align-items:center; justify-content:center;
+  flex-shrink:0;
+}
+
+/* Reorderable exercise list inside the routine editor */
+.reorder-item{
+  display:flex; align-items:center; gap:10px;
+  padding:11px 12px; background:var(--panel); border:1px solid var(--border);
+  border-radius:10px; margin-bottom:8px;
+  position:relative;
+  transition:transform .18s ease;
+}
+.reorder-item.dragging{
+  z-index:60; border-color:var(--accent); box-shadow:0 10px 24px -6px rgba(0,0,0,0.55), 0 0 0 1px var(--accent-dim);
+  background:var(--panel-raised);
+  transition:none; /* dragged item must track the finger with zero lag */
+}
+.reorder-handle{
+  width:28px; height:36px; flex-shrink:0; display:flex; align-items:center; justify-content:center;
+  color:var(--text-faint); cursor:grab; border-radius:6px;
+  touch-action:none;
+}
+.reorder-handle:active{cursor:grabbing; color:var(--accent); background:var(--panel-raised);}
+.reorder-handle svg{width:16px; height:16px; pointer-events:none;}
+.reorder-nudge-group{display:flex; flex-direction:column; gap:2px; flex-shrink:0;}
+.reorder-nudge-btn{
+  width:24px; height:17px; border-radius:5px; background:var(--panel-raised);
+  border:1px solid var(--border); color:var(--text-faint);
+  display:flex; align-items:center; justify-content:center;
+}
+.reorder-nudge-btn:active{border-color:var(--accent-dim); color:var(--accent);}
+.reorder-nudge-btn:disabled{opacity:0.3; pointer-events:none;}
+.reorder-nudge-btn svg{width:11px; height:11px;}
+
+/* In-progress exercise card during logging */
+.logging-exercise-card{
+  background:var(--panel); border:1px solid var(--border);
+  border-radius:12px; padding:16px; margin-bottom:12px;
+}
+.logging-exercise-header{
+  display:flex; align-items:center; justify-content:space-between; margin-bottom:12px;
+}
+.logging-exercise-header h3{font-size:14.5px; font-weight:700;}
+.remove-ex-btn{color:var(--text-faint); background:none; border:none; padding:4px;}
+.remove-ex-btn svg{width:17px; height:17px;}
+.remove-ex-btn:active{color:var(--danger);}
+
+.last-time-label{
+  font-size:12px; color:var(--text-muted); margin-bottom:8px;
+}
+.last-time-label .num{color:var(--accent); font-weight:700;}
+.sparkline-row{display:flex; align-items:center; gap:8px; margin-bottom:12px;}
+.sparkline-row svg{display:block; filter:drop-shadow(0 0 3px var(--accent-glow));}
+.sparkline-label{font-size:10.5px; color:var(--text-faint); font-weight:600; text-transform:uppercase; letter-spacing:0.02em;}
+.pr-badge{
+  font-size:9.5px; font-weight:700; color:#04140b; background:var(--accent);
+  padding:2px 7px; border-radius:4px; letter-spacing:0.03em; text-transform:uppercase;
+}
+.one-rm-badge{
+  font-size:9.5px; font-weight:700; color:var(--text-muted); background:var(--panel-raised);
+  border:1px solid var(--border); padding:2px 7px; border-radius:4px;
+  letter-spacing:0.02em; margin-left:auto;
+}
+.one-rm-badge.is-pr{color:#04140b; background:var(--cyan); border-color:var(--cyan);}
+
+.set-row{
+  display:grid; grid-template-columns:22px 1fr 1fr 1.3fr 32px; gap:6px;
+  align-items:center; margin-bottom:8px;
+}
+.set-row .set-num{
+  font-size:12px; color:var(--text-faint); font-weight:700; text-align:center;
+  cursor:pointer; border-radius:6px; padding:4px 0; transition:background .15s, color .15s;
+  user-select:none;
+}
+.set-row .set-num:active{background:var(--panel-raised);}
+.set-row.warmup .set-num{color:var(--cyan); background:#3ad6ff14;}
+.set-row.warmup input{opacity:0.75;}
+.set-row input{
+  background:var(--input-bg); border:1px solid var(--border);
+  border-radius:7px; padding:9px 6px; color:var(--text); text-align:center;
+  font-size:14px; width:100%;
+}
+.set-row input:focus{outline:none; border-color:var(--accent); box-shadow:0 0 0 1px var(--accent-dim);}
+.difficulty-group{
+  display:flex; gap:3px; background:var(--input-bg); border:1px solid var(--border);
+  border-radius:7px; padding:2px;
+}
+.difficulty-btn{
+  flex:1; background:none; border:none; color:var(--text-faint);
+  font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:0.02em;
+  padding:7px 2px; border-radius:5px; transition:background .15s, color .15s;
+}
+.difficulty-btn.active{background:var(--accent-dim); color:var(--accent);}
+.difficulty-btn.active[data-diff="hard"]{background:#ff5f6d22; color:var(--danger);}
+.difficulty-btn.active[data-diff="easy"]{background:#3ad6ff22; color:var(--cyan);}
+.set-check{
+  width:32px; height:32px; border-radius:7px; border:1px solid var(--border);
+  background:var(--input-bg); color:var(--text-faint);
+  display:flex; align-items:center; justify-content:center; flex-shrink:0;
+}
+.set-check.checked{background:var(--accent-dim); border-color:var(--accent); color:var(--accent); box-shadow:0 0 8px -2px var(--accent-glow);}
+.set-check svg{width:15px; height:15px;}
+.set-headers{
+  display:grid; grid-template-columns:22px 1fr 1fr 1.3fr 32px; gap:6px;
+  margin-bottom:6px;
+}
+.set-headers span{font-size:9px; color:var(--cyan); text-transform:uppercase; text-align:center; font-weight:700; letter-spacing:.04em; opacity:0.75;}
+.add-set-btn{
+  width:100%; padding:9px; border-radius:7px; border:1px dashed var(--border);
+  background:none; color:var(--text-muted); font-size:12px; font-weight:600;
+  margin-top:2px; text-transform:uppercase; letter-spacing:0.02em;
+}
+.add-set-btn:active{border-color:var(--accent-dim); color:var(--accent);}
+.notes-input{
+  width:100%; background:var(--input-bg); border:1px solid var(--border-soft);
+  border-radius:7px; padding:8px 10px; color:var(--text-muted); font-size:12.5px;
+  margin-top:10px; resize:none;
+}
+
+.finish-bar{
+  position:fixed; bottom:0; left:0; right:0; z-index:55;
+  background:rgba(8,11,12,0.95); backdrop-filter:blur(16px);
+  border-top:1px solid var(--border-soft);
+  padding:12px 16px calc(12px + env(safe-area-inset-bottom));
+  display:flex; gap:10px;
+}
+.finish-bar .btn{flex:1;}
+.tabbar.hidden{display:none;}
+body.workout-active{padding-bottom:calc(96px + env(safe-area-inset-bottom));}
+
+/* ============ CALENDAR VIEW ============ */
+.cal-header{display:flex; align-items:center; justify-content:space-between; margin-bottom:16px;}
+.cal-header h2{font-size:15px; text-transform:uppercase; letter-spacing:0.04em; color:var(--cyan);}
+.cal-nav-btn{
+  width:32px; height:32px; border-radius:7px; background:var(--panel);
+  border:1px solid var(--border); color:var(--text-muted);
+  display:flex; align-items:center; justify-content:center;
+}
+.cal-nav-btn:active{border-color:var(--accent-dim); color:var(--accent);}
+.cal-nav-btn svg{width:16px; height:16px;}
+.cal-grid{display:grid; grid-template-columns:repeat(7,1fr); gap:5px; margin-bottom:20px;}
+.cal-dow{text-align:center; font-size:9.5px; color:var(--text-faint); font-weight:700; padding-bottom:4px; text-transform:uppercase;}
+.cal-cell{
+  aspect-ratio:1; border-radius:7px; display:flex; flex-direction:column;
+  align-items:center; justify-content:center; position:relative;
+  background:var(--panel-raised); border:1px solid var(--border-soft);
+  font-size:12px; color:var(--text-muted); font-weight:600;
+  cursor:pointer; transition:border-color .15s, background .15s;
+}
+.cal-cell:active{border-color:var(--accent-dim);}
+.cal-cell.empty{background:transparent; border:none; cursor:default;}
+.cal-cell.trained{background:var(--accent-glow); border-color:var(--accent-dim); color:var(--text);}
+.cal-cell.today{box-shadow:0 0 0 2px var(--accent);}
+.cal-cell .dot{
+  width:4px; height:4px; border-radius:50%; background:var(--accent);
+  position:absolute; bottom:5px;
+  box-shadow:0 0 4px var(--accent);
+}
+.cal-cell.rest-day{border-color:#3ad6ff40;}
+.cal-legend{display:flex; gap:14px; margin-bottom:20px; flex-wrap:wrap;}
+.cal-legend-item{display:flex; align-items:center; gap:6px; font-size:11px; color:var(--text-muted);}
+.cal-legend-swatch{width:10px; height:10px; border-radius:3px;}
+
+.month-summary-grid{display:grid; grid-template-columns:repeat(2,1fr); gap:10px; margin-bottom:20px;}
+
+/* ============ EXERCISE LIBRARY / PROGRESS ============ */
+.progress-ex-card{
+  background:var(--panel); border:1px solid var(--border); border-radius:11px;
+  padding:16px; margin-bottom:10px;
+}
+.progress-ex-header{display:flex; align-items:center; justify-content:space-between; margin-bottom:2px;}
+.progress-ex-header h3{font-size:14px; font-weight:700;}
+.progress-ex-stats{display:flex; gap:14px; margin-top:10px;}
+.progress-ex-stat .v{font-size:16px; font-weight:700; color:var(--accent);}
+.progress-ex-stat .l{font-size:9.5px; color:var(--text-faint); text-transform:uppercase; font-weight:600; letter-spacing:.03em;}
+
+/* ============ SETTINGS / DATA VIEW ============ */
+.settings-group{margin-bottom:24px;}
+.settings-row{
+  display:flex; align-items:center; justify-content:space-between;
+  padding:14px 4px; border-bottom:1px solid var(--border-soft);
+}
+.settings-row:last-child{border-bottom:none;}
+.settings-row-label{font-size:13.5px; font-weight:600;}
+.settings-row-sub{font-size:11.5px; color:var(--text-faint); margin-top:2px;}
+.toggle{
+  width:44px; height:26px; border-radius:99px; background:var(--input-bg);
+  border:1px solid var(--border); position:relative; transition:background .2s, border-color .2s;
+}
+.toggle.on{background:var(--accent-dim); border-color:var(--accent);}
+.toggle::after{
+  content:''; position:absolute; top:2px; left:2px; width:20px; height:20px;
+  border-radius:50%; background:var(--text-faint); transition:transform .2s, background .2s;
+}
+.toggle.on::after{transform:translateX(18px); background:var(--accent); box-shadow:0 0 6px var(--accent-glow);}
+
+/* ============ MODAL / SHEET ============ */
+.sheet-backdrop{
+  position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:90;
+  opacity:0; pointer-events:none; transition:opacity .2s;
+  backdrop-filter:blur(2px);
+}
+.sheet-backdrop.open{opacity:1; pointer-events:auto;}
+.sheet{
+  position:fixed; left:0; right:0; bottom:0; z-index:91;
+  background:var(--panel); border-radius:16px 16px 0 0;
+  border:1px solid var(--border); border-bottom:none;
+  box-shadow:0 -8px 32px -8px rgba(0,0,0,0.5);
+  padding:10px 20px calc(24px + env(safe-area-inset-bottom));
+  max-height:85vh; overflow-y:auto;
+  overscroll-behavior:contain;
+  transform:translateY(100%); transition:transform .28s cubic-bezier(.32,.72,0,1);
+}
+.sheet.open{transform:translateY(0);}
+.sheet.dragging{transition:none;}
+.sheet-handle-hitarea{
+  padding:6px 0 14px; margin:-6px 0 0; cursor:grab; touch-action:none;
+  display:flex; justify-content:center;
+}
+.sheet-handle-hitarea:active{cursor:grabbing;}
+.sheet-handle{width:36px; height:4px; background:var(--border); border-radius:99px; transition:background .15s;}
+.sheet-handle-hitarea:active .sheet-handle{background:var(--accent);}
+.sheet-title{font-size:16px; font-weight:700; margin-bottom:16px; color:var(--cyan);}
+
+.sheet.sheet-fixed-height{
+  max-height:85vh; display:flex; flex-direction:column; overflow:hidden;
+}
+.sheet-fixed-height .sheet-scroll-body{
+  overflow-y:auto; flex:1; min-height:0;
+  -webkit-overflow-scrolling:touch;
+  overscroll-behavior:contain;
+}
+.sheet-fixed-height .sheet-footer{
+  flex-shrink:0; padding-top:12px;
+}
+
+.toast{
+  position:fixed; bottom:calc(88px + env(safe-area-inset-bottom)); left:50%;
+  transform:translateX(-50%) translateY(20px); z-index:99;
+  background:var(--panel); border:1px solid var(--accent-dim); color:var(--text); padding:11px 18px; border-radius:9px;
+  font-size:12.5px; font-weight:600; opacity:0; transition:opacity .25s, transform .25s;
+  pointer-events:none; box-shadow:0 8px 24px -4px rgba(0,0,0,0.6), 0 0 16px -6px var(--accent-glow);
+  display:flex; align-items:center; gap:8px; white-space:nowrap;
+}
+.toast.show{opacity:1; transform:translateX(-50%) translateY(0);}
+.toast svg{width:15px; height:15px; color:var(--accent); flex-shrink:0;}
+
+/* scroll-lock */
+body.sheet-open{overflow:hidden;}
+
+/* file input hidden */
+.hidden-file-input{display:none;}
+
+/* misc utility */
+.row{display:flex; align-items:center; justify-content:space-between;}
+.mt-4{margin-top:4px;} .mt-8{margin-top:8px;} .mt-12{margin-top:12px;} .mt-16{margin-top:16px;} .mt-20{margin-top:20px;} .mt-24{margin-top:24px;}
+.mb-8{margin-bottom:8px;} .mb-12{margin-bottom:12px;} .mb-16{margin-bottom:16px;}
+.text-faint{color:var(--text-faint);}
+.text-muted{color:var(--text-muted);}
+.text-sm{font-size:12.5px;}
+.center{text-align:center;}
+.divider{height:1px; background:var(--border-soft); margin:20px 0;}
+</style>
+</head>
+<body>
+
+<header class="app-header">
+  <div class="brand">
+    <div class="brand-mark">
+      <svg viewBox="0 0 24 24" fill="none" stroke="#39ff9a" stroke-width="2.4" stroke-linecap="round"><path d="M4 5v14M4 12h16M20 5v14"/></svg>
+    </div>
+    <div class="brand-name"><span style="color:var(--accent);">&gt;_</span> gym tracker <span class="dim">/ log</span></div>
+  </div>
+  <div class="header-actions">
+    <button class="icon-btn" id="btnSettings" aria-label="Settings">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+    </button>
+  </div>
+</header>
+
+<main>
+
+  <!-- ============ HOME VIEW ============ -->
+  <section class="view active" id="view-home">
+    <div class="today-hero">
+      <div class="today-date" id="todayDateLabel">—</div>
+      <div class="today-status" id="todayStatusLabel">Ready when you are.</div>
+
+      <div class="streak-row">
+        <svg class="streak-flame" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2c1 3-3 4-3 8a3 3 0 0 0 6 0c1 2 2 3 2 5a5 5 0 0 1-10 0c0-4 3-5 3-9 0-1.5.5-3 2-4z"/></svg>
+        <span class="streak-text" id="streakText"><b>0</b> day streak</span>
+      </div>
+
+      <div class="stat-grid">
+        <div class="stat-box"><div class="v num" id="statWeekSessions">0</div><div class="l">Sessions / wk</div></div>
+        <div class="stat-box"><div class="v num" id="statWeekKcal">0</div><div class="l">Kcal / wk</div></div>
+        <div class="stat-box"><div class="v num" id="statTotalSessions">0</div><div class="l">Total logged</div></div>
+      </div>
+
+      <div class="week-ring-wrap">
+        <div class="week-ring">
+          <svg width="76" height="76" viewBox="0 0 76 76">
+            <circle class="bg-ring" cx="38" cy="38" r="32" fill="none" stroke-width="7"/>
+            <circle class="fg-ring" id="weekRingFg" cx="38" cy="38" r="32" fill="none" stroke-width="7" stroke-dasharray="201" stroke-dashoffset="201"/>
+          </svg>
+          <div class="week-ring-label"><span class="n num" id="weekRingPct">0%</span><span class="u">goal</span></div>
+        </div>
+        <div class="week-days" id="weekDaysStrip"></div>
+      </div>
+    </div>
+
+    <div class="quick-actions">
+      <button class="btn btn-primary btn-block" id="btnStartSession">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        Start session
+      </button>
+      <button class="btn btn-secondary" id="btnQuickWalk">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="13" cy="4" r="2"/><path d="M13 8l-3 3 1 6M10 11l-4 2v5M13 8l3 2 3 6"/></svg>
+        Log walk
+      </button>
+    </div>
+
+    <div id="templatesQuickRow" style="display:none;" class="mb-12">
+      <h2 class="section-label">Routines</h2>
+      <div class="card" style="padding:6px 14px;" id="templatesQuickList"></div>
+    </div>
+
+    <h2 class="section-label">Recent sessions</h2>
+    <div class="card" style="padding:6px 14px;" id="recentSessionsList">
+      <!-- populated -->
+    </div>
+  </section>
+
+  <!-- ============ LOG VIEW (exercise picker) ============ -->
+  <section class="view" id="view-log">
+    <div id="activeSessionBarWrap"></div>
+
+    <div class="exercise-picker-search">
+      <input type="text" id="exerciseSearchInput" placeholder="Search exercises…" autocomplete="off">
+    </div>
+    <div class="muscle-filter-scroll" id="muscleFilterScroll"></div>
+    <div id="exerciseLibraryList"></div>
+  </section>
+
+  <!-- ============ ACTIVE WORKOUT VIEW ============ -->
+  <section class="view" id="view-workout">
+    <div class="active-session-bar">
+      <div>
+        <div class="l" id="workoutTimerLabel">00:00</div>
+        <div class="t" id="workoutExCount">0 exercises</div>
+      </div>
+      <button class="btn btn-sm" style="background:rgba(255,255,255,0.18); color:#fff;" id="btnAddExercise">+ Add exercise</button>
+    </div>
+
+    <div class="rest-config-row">
+      <span class="rest-config-label">Rest between sets</span>
+      <div class="rest-chip-group" id="restDurationChips">
+        <button class="rest-chip" data-rest="30">30s</button>
+        <button class="rest-chip" data-rest="60">60s</button>
+        <button class="rest-chip active" data-rest="90">90s</button>
+        <button class="rest-chip" data-rest="120">2m</button>
+        <button class="rest-chip" data-rest="180">3m</button>
+      </div>
+    </div>
+
+    <div id="backdateBanner" style="display:none;" class="card mb-12">
+      <div class="row">
+        <div>
+          <div class="settings-row-label">Logging a past session</div>
+          <div class="settings-row-sub">No live timer — enter how long it took</div>
+        </div>
+      </div>
+      <div class="field mt-12" style="margin-bottom:0;">
+        <label>Duration (minutes)</label>
+        <input type="number" id="backdateDuration" inputmode="numeric" placeholder="45">
+      </div>
+    </div>
+
+    <div id="workoutExerciseCards"></div>
+
+    <div class="empty-state" id="workoutEmptyState">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M6 4v16M18 4v16M2 9h4M2 15h4M18 9h4M18 15h4M6 12h12"/></svg>
+      <p>No exercises yet. Tap "Add exercise" to start logging sets.</p>
+    </div>
+  </section>
+
+  <!-- ============ CALENDAR VIEW ============ -->
+  <section class="view" id="view-calendar">
+    <div class="cal-header">
+      <button class="cal-nav-btn" id="calPrevMonth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button>
+      <h2 id="calMonthLabel">—</h2>
+      <button class="cal-nav-btn" id="calNextMonth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></button>
+    </div>
+    <div class="cal-grid" id="calDowRow"></div>
+    <div class="cal-grid" id="calGrid"></div>
+    <div class="cal-legend">
+      <div class="cal-legend-item"><div class="cal-legend-swatch" style="background:var(--accent-glow); border:1px solid var(--accent-dim);"></div>Trained</div>
+      <div class="cal-legend-item"><div class="cal-legend-swatch" style="background:var(--panel-raised); border:1px solid #3ad6ff40;"></div>Rest day (streak-safe)</div>
+    </div>
+
+    <h2 class="section-label">This month</h2>
+    <div class="month-summary-grid">
+      <div class="stat-box"><div class="v num" id="monthSessions">0</div><div class="l">Sessions</div></div>
+      <div class="stat-box"><div class="v num" id="monthKcal">0</div><div class="l">Total kcal</div></div>
+    </div>
+
+    <h2 class="section-label">Sessions this month</h2>
+    <div class="card" style="padding:6px 14px;" id="calSessionsList"></div>
+  </section>
+
+  <!-- ============ PROGRESS VIEW ============ -->
+  <section class="view" id="view-progress">
+    <div class="field" style="margin-bottom:16px;">
+      <input type="text" id="progressSearchInput" placeholder="Search an exercise to see progress…" autocomplete="off">
+    </div>
+    <div id="progressList"></div>
+  </section>
+
+  <!-- ============ ROUTINES VIEW ============ -->
+  <section class="view" id="view-templates">
+    <button class="btn btn-primary btn-block mb-16" id="btnNewTemplate">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+      New routine
+    </button>
+    <div id="templatesFullList"></div>
+  </section>
+
+  <!-- ============ SETTINGS / DATA VIEW ============ -->
+  <section class="view" id="view-settings">
+    <div class="settings-group">
+      <h2 class="section-label">Cloud Sync</h2>
+      <div class="card" id="syncSignedOutCard">
+        <p class="text-sm text-muted mb-12">Sign in with Google to back up your data and sync it across devices.</p>
+        <button class="btn btn-secondary btn-block" id="btnGoogleSignIn">
+          <svg width="16" height="16" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>
+          Sign in with Google
+        </button>
+      </div>
+      <div class="card" id="syncSignedInCard" style="display:none;">
+        <div class="row">
+          <div style="display:flex; align-items:center; gap:10px; min-width:0;">
+            <img id="syncUserPhoto" src="" alt="" style="width:36px; height:36px; border-radius:50%; border:1px solid var(--border); flex-shrink:0;">
+            <div style="min-width:0;">
+              <div class="settings-row-label" id="syncUserName" style="white-space:nowrap; overflow:hidden; text-overflow:ellipsis;">—</div>
+              <div class="settings-row-sub" id="syncStatusLabel">Synced</div>
+            </div>
+          </div>
+        </div>
+        <button class="btn btn-ghost btn-block mt-12" id="btnGoogleSignOut">Sign out</button>
+      </div>
+    </div>
+
+    <div class="settings-group">
+      <h2 class="section-label">Profile</h2>
+      <div class="card">
+        <div class="field" style="margin-bottom:12px;">
+          <label>Body weight (kg) — used for kcal estimates</label>
+          <input type="number" id="settingBodyWeight" inputmode="decimal" placeholder="75">
+        </div>
+        <div class="field" style="margin-bottom:0;">
+          <label>Weekly session goal</label>
+          <input type="number" id="settingWeeklyGoal" inputmode="numeric" min="1" max="14" placeholder="4">
+        </div>
+      </div>
+    </div>
+
+    <div class="settings-group">
+      <h2 class="section-label">Units</h2>
+      <div class="card" style="padding:4px 16px;">
+        <div class="settings-row">
+          <div>
+            <div class="settings-row-label">Use lbs instead of kg</div>
+            <div class="settings-row-sub">Applies to weight fields and history</div>
+          </div>
+          <button class="toggle" id="toggleUnits"></button>
+        </div>
+      </div>
+    </div>
+
+    <div class="settings-group">
+      <h2 class="section-label">Backup &amp; restore</h2>
+      <div class="card">
+        <p class="text-sm text-muted mb-12">Your data lives only on this device. Export a backup file to move it to another device, or paste in a backup to restore.</p>
+        <button class="btn btn-secondary btn-block mb-12" id="btnExportBackup">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+          Export backup file
+        </button>
+        <button class="btn btn-secondary btn-block" id="btnImportBackup">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>
+          Restore from file
+        </button>
+        <input type="file" id="fileImportInput" class="hidden-file-input" accept="application/json">
+        <div class="divider"></div>
+        <p class="text-sm text-faint" id="lastBackupLabel">No backup exported yet.</p>
+      </div>
+    </div>
+
+    <div class="settings-group">
+      <h2 class="section-label">Danger zone</h2>
+      <div class="card">
+        <button class="btn btn-danger btn-block" id="btnResetAll">Erase all data</button>
+      </div>
+    </div>
+
+    <p class="text-sm text-faint center mt-24">Gym Tracker · offline-first · data stays on your device</p>
+  </section>
+
+</main>
+
+<nav class="tabbar">
+  <div class="tabbar-inner">
+    <button class="tab-btn active" data-view="home">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M9 22V12h6v10"/></svg>
+      Home
+    </button>
+    <button class="tab-btn" data-view="calendar">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+      Calendar
+    </button>
+    <div class="tab-fab-slot">
+      <button class="tab-fab" id="btnFabStart" aria-label="Start session">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+      </button>
+    </div>
+    <button class="tab-btn" data-view="progress">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M18 8l-5 5-3-3-4 4"/></svg>
+      Progress
+    </button>
+    <button class="tab-btn" data-view="templates">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+      Routines
+    </button>
+  </div>
+</nav>
+
+<!-- ===== Add exercise sheet ===== -->
+<div class="sheet-backdrop" id="sheetBackdrop"></div>
+
+<div class="sheet" id="sheetQuickWalk">
+  <div class="sheet-handle-hitarea"><div class="sheet-handle"></div></div>
+  <div class="sheet-title">Log incline walk</div>
+  <div class="field">
+    <label>Duration (minutes)</label>
+    <input type="number" id="walkDuration" inputmode="numeric" placeholder="30">
+  </div>
+  <div class="field-row">
+    <div class="field">
+      <label>Speed (km/h)</label>
+      <input type="number" id="walkSpeed" inputmode="decimal" step="0.1" placeholder="5.5">
+    </div>
+    <div class="field">
+      <label>Incline (%)</label>
+      <input type="number" id="walkIncline" inputmode="decimal" step="0.5" placeholder="8">
+    </div>
+  </div>
+  <div class="field">
+    <label>Estimated burn</label>
+    <div class="card" style="padding:12px; display:flex; align-items:baseline; gap:6px;">
+      <span class="num" style="font-size:22px; font-weight:700; color:var(--positive);" id="walkKcalPreview">0</span>
+      <span class="text-sm text-faint">kcal</span>
+    </div>
+  </div>
+  <button class="btn btn-primary btn-block" id="btnSaveWalk">Save to today's log</button>
+</div>
+
+<div class="sheet" id="sheetSessionSummary">
+  <div class="sheet-handle-hitarea"><div class="sheet-handle"></div></div>
+  <div class="sheet-title">Session complete</div>
+  <div id="summaryContent"></div>
+  <button class="btn btn-secondary btn-block mt-16" id="btnSaveAsTemplate">Save as routine</button>
+  <button class="btn btn-primary btn-block mt-8" id="btnCloseSummary">Done</button>
+</div>
+
+<div class="sheet" id="sheetExerciseDetail">
+  <div class="sheet-handle-hitarea"><div class="sheet-handle"></div></div>
+  <div id="exerciseDetailContent"></div>
+</div>
+
+<div class="sheet" id="sheetSaveTemplate">
+  <div class="sheet-handle-hitarea"><div class="sheet-handle"></div></div>
+  <div class="sheet-title">Save as routine</div>
+  <div class="field" style="margin-bottom:16px;">
+    <label>Routine name</label>
+    <input type="text" id="templateNameInput" placeholder="e.g. Monday — Push day" autocomplete="off">
+  </div>
+  <button class="btn btn-primary btn-block" id="btnConfirmSaveTemplate">Save routine</button>
+</div>
+
+<div class="sheet sheet-fixed-height" id="sheetEditTemplate">
+  <div class="sheet-handle-hitarea"><div class="sheet-handle"></div></div>
+  <div class="row mb-16">
+    <div class="sheet-title" style="margin-bottom:0;" id="editTemplateTitle">Edit routine</div>
+    <button class="icon-btn" id="btnDeleteTemplateFromEditor">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6h14z"/></svg>
+    </button>
+  </div>
+  <div class="field" style="margin-bottom:16px;">
+    <label>Routine name</label>
+    <input type="text" id="editTemplateNameInput" placeholder="e.g. Monday — Push day" autocomplete="off">
+  </div>
+  <div class="section-label">Exercises</div>
+  <div class="sheet-scroll-body">
+    <div id="editTemplateExerciseList" class="mb-12"></div>
+  </div>
+  <div class="sheet-footer">
+    <button class="btn btn-secondary btn-block mb-16" id="btnAddExerciseToTemplate">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+      Add exercise
+    </button>
+    <button class="btn btn-primary btn-block" id="btnSaveTemplateEdits">Save changes</button>
+  </div>
+</div>
+
+<div class="toast" id="toast">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>
+  <span id="toastText"></span>
+</div>
+
+<script src="firebase-config.js"></script>
+<script type="module" src="firebase-sync.js"></script>
+<script src="exercises.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
