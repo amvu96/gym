@@ -2287,6 +2287,46 @@ document.getElementById('toggleNotifications').addEventListener('click', async (
   refreshNotificationsToggleUI();
 });
 
+/* ---------------- BATTERY / BACKGROUND ACTIVITY SETTINGS SHORTCUT ----------------
+   Android exposes an intent (ACTION_APPLICATION_DETAILS_SETTINGS) that opens
+   a specific app's "App info" page — this is as close as the platform lets
+   any app (native or TWA) jump toward battery/background settings; there is
+   no intent that goes deeper (e.g. straight to "Allow background activity"),
+   so the user still taps "Battery" from that screen themselves. This only
+   works because the app is packaged as a TWA with a real Android package
+   name — a plain website has no package to target and can't do this at all.
+------------------------------------------------- */
+const ANDROID_TWA_PACKAGE_NAME = 'eu.nullvault.gym.twa'; // e.g. 'eu.nullvault.gymtracker'
+
+function isLikelyAndroidTWA(){
+  const isAndroid = /Android/i.test(navigator.userAgent);
+  const isStandalone = window.matchMedia('(display-mode: standalone)').matches || window.matchMedia('(display-mode: fullscreen)').matches;
+  return isAndroid && isStandalone;
+}
+
+const batteryRow = document.getElementById('btnBatterySettingsRow');
+if(batteryRow){
+  if(!isLikelyAndroidTWA()){
+    // hide entirely for non-Android or non-installed contexts, since the
+    // intent below simply won't do anything there
+    batteryRow.style.display = 'none';
+  } else {
+    batteryRow.addEventListener('click', ()=>{
+      if(ANDROID_TWA_PACKAGE_NAME.startsWith('PASTE_')){
+        toast('Set your TWA package name in app.js to enable this');
+        return;
+      }
+      // Chrome's intent:// syntax for reconstructing a native "package:<name>"
+      // data URI is a genuinely under-documented corner of the format — this
+      // has NOT been verified on a real device. If it doesn't work, the
+      // fallback below (open the Play Store's app page, which reliably has
+      // an "App info"-adjacent path) is used instead.
+      const intentUrl = `intent://details#Intent;scheme=package;package=${ANDROID_TWA_PACKAGE_NAME};action=android.settings.APPLICATION_DETAILS_SETTINGS;S.browser_fallback_url=${encodeURIComponent('https://play.google.com/store/apps/details?id='+ANDROID_TWA_PACKAGE_NAME)};end`;
+      window.location.href = intentUrl;
+    });
+  }
+}
+
 function updateLastBackupLabel(){
   const el = document.getElementById('lastBackupLabel');
   if(state.settings.lastBackupAt){
