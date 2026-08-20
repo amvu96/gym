@@ -162,7 +162,10 @@ main{max-width:640px; margin:0 auto; padding:18px 16px 40px;}
   box-shadow:0 6px 18px -4px var(--accent-glow), 0 0 0 5px var(--bg), 0 2px 6px rgba(0,0,0,0.4);
   transition:transform .15s, box-shadow .15s;
 }
-.tab-fab svg{width:24px; height:24px;}
+.tab-fab svg{width:24px; height:24px; position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);}
+.tab-fab .fab-icon-active{display:none;}
+.tab-fab.active-session .fab-icon-start{display:none;}
+.tab-fab.active-session .fab-icon-active{display:block;}
 .tab-fab:active{transform:scale(0.93); box-shadow:0 3px 10px -2px var(--accent-glow), 0 0 0 5px var(--bg);}
 .tab-fab.active-session{
   background:linear-gradient(155deg, #ff8a3d, #ff5c5c);
@@ -791,18 +794,19 @@ body.workout-active{padding-bottom:calc(96px + env(safe-area-inset-bottom));}
 .session-ex-video-thumb .play-badge svg{width:16px; height:16px; color:#fff; filter:drop-shadow(0 1px 2px rgba(0,0,0,0.6));}
 
 .session-set-grid{width:100%; border-collapse:collapse; table-layout:fixed;}
-.session-set-grid col.col-num{width:11%;}
-.session-set-grid col.col-weight{width:33%;}
-.session-set-grid col.col-reps{width:28%;}
-.session-set-grid col.col-effort{width:28%;}
+.session-set-grid col.col-num{width:9%;}
+.session-set-grid col.col-weight{width:27%;}
+.session-set-grid col.col-reps{width:24%;}
+.session-set-grid col.col-effort{width:40%;}
 .session-set-grid th{
   font-size:9px; color:var(--cyan); text-transform:uppercase; letter-spacing:.03em; font-weight:700;
-  text-align:center; padding-bottom:6px; opacity:0.8;
+  text-align:left; padding-bottom:6px; opacity:0.8;
   overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
 }
 .session-set-grid th:first-child, .session-set-grid td:first-child{text-align:left; padding-left:2px;}
+.session-set-grid th:last-child, .session-set-grid td:last-child{text-align:right; padding-right:2px;}
 .session-set-grid td{
-  font-size:12.5px; color:var(--text); text-align:center; padding:6px 2px;
+  font-size:12.5px; color:var(--text); text-align:left; padding:6px 2px;
   border-top:1px solid var(--border-soft);
 }
 .session-set-grid td.set-num-cell{color:var(--text-faint); font-weight:700; font-size:11px;}
@@ -1211,7 +1215,8 @@ body.sheet-open{overflow:hidden;}
     </button>
     <div class="tab-fab-slot">
       <button class="tab-fab" id="btnFabStart" aria-label="Start session">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+        <svg class="fab-icon-start" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>
+        <svg class="fab-icon-active" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12h3l2-7 4 14 2-7h5"/></svg>
       </button>
     </div>
     <button class="tab-btn" data-view="progress">
