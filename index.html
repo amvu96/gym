@@ -606,6 +606,56 @@ body.workout-active{padding-bottom:calc(96px + env(safe-area-inset-bottom));}
 .month-summary-grid{display:grid; grid-template-columns:repeat(2,1fr); gap:10px; margin-bottom:20px;}
 
 /* ============ EXERCISE LIBRARY / PROGRESS ============ */
+/* ============ PROGRESS PAGE — SUMMARY & CHARTS ============ */
+.progress-summary-grid{
+  display:grid; grid-template-columns:repeat(2,1fr); gap:8px; margin-bottom:16px;
+}
+.progress-summary-box{
+  background:var(--panel); border:1px solid var(--border); border-radius:12px;
+  padding:14px; position:relative; overflow:hidden;
+}
+.progress-summary-box::before{
+  content:''; position:absolute; top:-40%; right:-20%;
+  width:120px; height:120px; border-radius:50%;
+  background:radial-gradient(circle,var(--accent-glow),transparent 70%);
+  pointer-events:none;
+}
+.progress-summary-box .v{font-size:22px; font-weight:700; letter-spacing:-0.01em; color:var(--text);}
+.progress-summary-box .l{font-size:10px; color:var(--text-faint); text-transform:uppercase; letter-spacing:.04em; margin-top:3px; font-weight:600;}
+.progress-summary-box .v.accent{color:var(--accent);}
+
+.progress-chart-card{
+  background:var(--panel); border:1px solid var(--border); border-radius:14px;
+  padding:16px; margin-bottom:16px;
+}
+.progress-chart-title{
+  display:flex; align-items:center; justify-content:space-between; margin-bottom:14px;
+}
+.progress-chart-title h3{font-size:13px; font-weight:700; color:var(--text);}
+.progress-chart-title .sub{font-size:10.5px; color:var(--text-faint); font-weight:600;}
+
+.volume-bar-chart{display:flex; align-items:flex-end; gap:5px; height:90px; margin-bottom:8px;}
+.volume-bar-col{flex:1; display:flex; flex-direction:column; align-items:center; justify-content:flex-end; height:100%; gap:4px;}
+.volume-bar{
+  width:100%; max-width:26px; border-radius:4px 4px 2px 2px;
+  background:var(--accent-dim); border:1px solid var(--accent-dim);
+  min-height:3px; transition:height .4s cubic-bezier(.32,.72,0,1);
+  position:relative;
+}
+.volume-bar.current-week{background:var(--accent); box-shadow:0 0 10px -2px var(--accent-glow);}
+.volume-bar-labels{display:flex; gap:5px;}
+.volume-bar-label{flex:1; text-align:center; font-size:8.5px; color:var(--text-faint); font-weight:700; max-width:26px; margin:0 auto;}
+
+.muscle-bar-row{display:flex; align-items:center; gap:10px; margin-bottom:10px;}
+.muscle-bar-row:last-child{margin-bottom:0;}
+.muscle-bar-label{
+  width:74px; flex-shrink:0; font-size:11px; color:var(--text-muted); font-weight:600;
+  text-transform:uppercase; letter-spacing:.02em;
+}
+.muscle-bar-track{flex:1; height:8px; background:var(--panel-raised); border-radius:99px; overflow:hidden;}
+.muscle-bar-fill{height:100%; border-radius:99px; background:linear-gradient(90deg,var(--neon-dim),var(--accent)); transition:width .4s ease;}
+.muscle-bar-count{width:26px; flex-shrink:0; text-align:right; font-size:11px; color:var(--text-faint); font-weight:700;}
+
 .progress-ex-card{
   background:var(--panel); border:1px solid var(--border); border-radius:11px;
   padding:16px; margin-bottom:10px;
@@ -852,8 +902,13 @@ body.sheet-open{overflow:hidden;}
 
   <!-- ============ PROGRESS VIEW ============ -->
   <section class="view" id="view-progress">
+    <div id="progressSummary"></div>
+    <div id="progressVolumeChart"></div>
+    <div id="progressMuscleBreakdown"></div>
+
+    <h2 class="section-label">Exercises</h2>
     <div class="field" style="margin-bottom:16px;">
-      <input type="text" id="progressSearchInput" placeholder="Search an exercise to see progress…" autocomplete="off">
+      <input type="text" id="progressSearchInput" placeholder="Search an exercise…" autocomplete="off">
     </div>
     <div id="progressList"></div>
   </section>
