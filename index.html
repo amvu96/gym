@@ -726,6 +726,63 @@ body.workout-active{padding-bottom:calc(96px + env(safe-area-inset-bottom));}
 .ex-history-sets{flex:1; min-width:0; font-size:12px; color:var(--text-muted); line-height:1.5;}
 .ex-history-best{font-size:13px; font-weight:700; color:var(--accent); white-space:nowrap; flex-shrink:0;}
 
+/* Session detail sheet — per-exercise cards with a real set grid */
+.session-detail-hero{
+  display:flex; align-items:center; justify-content:space-between; gap:12px;
+  margin-bottom:18px;
+}
+.session-detail-date{font-size:17px; font-weight:700; color:var(--text);}
+.session-detail-type{font-size:11.5px; color:var(--text-faint); margin-top:2px;}
+.session-detail-stat-grid{display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-bottom:22px;}
+
+.session-ex-card{
+  background:var(--panel-raised); border:1px solid var(--border); border-radius:13px;
+  padding:14px; margin-bottom:12px;
+}
+.session-ex-card-header{display:flex; align-items:center; gap:10px; margin-bottom:12px;}
+.session-ex-card-icon{
+  width:34px; height:34px; border-radius:8px; flex-shrink:0;
+  background:var(--panel); border:1px solid var(--border-soft);
+  display:flex; align-items:center; justify-content:center; font-size:15px;
+}
+.session-ex-card-name{flex:1; min-width:0; font-size:14px; font-weight:700; color:var(--text);}
+.session-ex-card-name .assist-tag{display:block; font-size:10.5px; color:var(--cyan); font-weight:600; margin-top:1px;}
+.session-ex-video-thumb{
+  position:relative; width:52px; height:34px; flex-shrink:0; border-radius:7px; overflow:hidden;
+  border:1px solid var(--border); background:var(--panel);
+}
+.session-ex-video-thumb img{width:100%; height:100%; object-fit:cover; display:block;}
+.session-ex-video-thumb .play-badge{
+  position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+  background:rgba(0,0,0,0.25);
+}
+.session-ex-video-thumb .play-badge svg{width:16px; height:16px; color:#fff; filter:drop-shadow(0 1px 2px rgba(0,0,0,0.6));}
+
+.session-set-grid{width:100%; border-collapse:collapse;}
+.session-set-grid th{
+  font-size:9px; color:var(--cyan); text-transform:uppercase; letter-spacing:.03em; font-weight:700;
+  text-align:center; padding-bottom:6px; opacity:0.8;
+}
+.session-set-grid th:first-child, .session-set-grid td:first-child{text-align:left; padding-left:2px;}
+.session-set-grid td{
+  font-size:12.5px; color:var(--text); text-align:center; padding:6px 2px;
+  border-top:1px solid var(--border-soft);
+}
+.session-set-grid td.set-num-cell{color:var(--text-faint); font-weight:700; font-size:11px;}
+.session-set-grid tr.warmup-row td{color:var(--cyan); opacity:0.85;}
+.session-set-diff-badge{
+  display:inline-block; font-size:9px; font-weight:700; padding:2px 6px; border-radius:4px;
+  text-transform:uppercase;
+}
+.session-set-diff-badge.easy{color:var(--cyan); background:#3ad6ff14;}
+.session-set-diff-badge.medium{color:var(--accent); background:var(--accent-glow);}
+.session-set-diff-badge.hard{color:var(--danger); background:var(--danger-dim);}
+.session-ex-notes{font-size:12px; color:var(--text-faint); font-style:italic; margin-top:10px; padding-top:10px; border-top:1px solid var(--border-soft);}
+.session-walk-summary{display:flex; gap:16px;}
+.session-walk-stat{text-align:center; flex:1;}
+.session-walk-stat .v{font-size:16px; font-weight:700; color:var(--accent);}
+.session-walk-stat .l{font-size:9px; color:var(--text-faint); text-transform:uppercase; font-weight:600; margin-top:2px;}
+
 /* ============ SETTINGS / DATA VIEW ============ */
 .settings-group{margin-bottom:24px;}
 .settings-row{
@@ -754,16 +811,18 @@ body.workout-active{padding-bottom:calc(96px + env(safe-area-inset-bottom));}
 }
 .sheet-backdrop.open{opacity:1; pointer-events:auto;}
 .sheet{
-  position:fixed; left:0; right:0; bottom:0; z-index:91;
+  position:fixed; left:50%; right:auto; bottom:0; z-index:91;
+  transform:translate(-50%, 100%);
+  width:100%; max-width:600px;
   background:var(--panel); border-radius:16px 16px 0 0;
   border:1px solid var(--border); border-bottom:none;
   box-shadow:0 -8px 32px -8px rgba(0,0,0,0.5);
   padding:10px 20px calc(24px + env(safe-area-inset-bottom));
   max-height:85vh; overflow-y:auto;
   overscroll-behavior:contain;
-  transform:translateY(100%); transition:transform .28s cubic-bezier(.32,.72,0,1);
+  transition:transform .28s cubic-bezier(.32,.72,0,1);
 }
-.sheet.open{transform:translateY(0);}
+.sheet.open{transform:translate(-50%, 0);}
 .sheet.dragging{transition:none;}
 .sheet-handle-hitarea{
   padding:6px 0 14px; margin:-6px 0 0; cursor:grab; touch-action:none;
