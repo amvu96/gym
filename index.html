@@ -790,10 +790,15 @@ body.workout-active{padding-bottom:calc(96px + env(safe-area-inset-bottom));}
 }
 .session-ex-video-thumb .play-badge svg{width:16px; height:16px; color:#fff; filter:drop-shadow(0 1px 2px rgba(0,0,0,0.6));}
 
-.session-set-grid{width:100%; border-collapse:collapse;}
+.session-set-grid{width:100%; border-collapse:collapse; table-layout:fixed;}
+.session-set-grid col.col-num{width:11%;}
+.session-set-grid col.col-weight{width:33%;}
+.session-set-grid col.col-reps{width:28%;}
+.session-set-grid col.col-effort{width:28%;}
 .session-set-grid th{
   font-size:9px; color:var(--cyan); text-transform:uppercase; letter-spacing:.03em; font-weight:700;
   text-align:center; padding-bottom:6px; opacity:0.8;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
 }
 .session-set-grid th:first-child, .session-set-grid td:first-child{text-align:left; padding-left:2px;}
 .session-set-grid td{
