@@ -95,6 +95,21 @@ function parseISO(iso){ const [y,m,d]=iso.split('-').map(Number); return new Dat
 function sameDay(a,b){ return a.getFullYear()===b.getFullYear() && a.getMonth()===b.getMonth() && a.getDate()===b.getDate(); }
 function allExercises(){ return EXERCISE_DB.concat(state.customExercises); }
 function findExercise(id){ return allExercises().find(e=>e.id===id); }
+
+// Extracts an 11-char YouTube video ID from any common URL shape
+// (watch?v=, youtu.be/, shorts/, embed/) so we can build a thumbnail URL
+// and a clean watch link without needing an API call.
+function getYouTubeId(url){
+  if(!url) return null;
+  const patterns = [
+    /(?:youtube\.com\/watch\?v=|youtube\.com\/shorts\/|youtube\.com\/embed\/|youtu\.be\/)([a-zA-Z0-9_-]{11})/
+  ];
+  for(const re of patterns){
+    const m = url.match(re);
+    if(m) return m[1];
+  }
+  return null;
+}
 function kgToDisplay(kg){ return state.settings.useLbs ? Math.round(kg*LB_PER_KG*10)/10 : kg; }
 function displayToKg(val){ return state.settings.useLbs ? val/LB_PER_KG : val; }
 function unitLabel(){ return state.settings.useLbs ? 'lb' : 'kg'; }
@@ -2276,7 +2291,7 @@ function onSheetSwipeMove(e){
   if(!sheetSwipe) return;
   const dy = e.clientY - sheetSwipe.startY;
   const clamped = Math.max(0, dy); // only allow dragging downward, not past the open position
-  sheetSwipe.sheetEl.style.transform = `translateY(${clamped}px)`;
+  sheetSwipe.sheetEl.style.transform = `translate(-50%, ${clamped}px)`;
 
   const now = performance.now();
   const dt = now - sheetSwipe.lastT;
@@ -2331,35 +2346,32 @@ document.addEventListener('click', (e)=>{
 function showSessionDetail(session){
   const content = document.getElementById('exerciseDetailContent');
   const d = parseISO(session.date);
+  const isToday = session.date===todayISO();
+
   content.innerHTML = `
-    <div class="sheet-title">${d.toLocaleDateString(undefined,{weekday:'long', month:'long', day:'numeric'})}</div>
-    <div class="stat-grid" style="grid-template-columns:repeat(3,1fr); margin-bottom:16px;">
+    <div class="session-detail-hero">
+      <div>
+        <div class="session-detail-date">${d.toLocaleDateString(undefined,{weekday:'long', month:'long', day:'numeric'})}</div>
+        <div class="session-detail-type">${session.type==='walk'?'Walk session':'Strength session'}${isToday?' · Today':''}</div>
+      </div>
+    </div>
+    <div class="session-detail-stat-grid">
       <div class="stat-box"><div class="v num">${session.exercises.length}</div><div class="l">Exercises</div></div>
       <div class="stat-box"><div class="v num">${session.durationMin}</div><div class="l">Minutes</div></div>
       <div class="stat-box"><div class="v num" style="color:var(--positive);">${Math.round(sessionTotalKcal(session))}</div><div class="l">Kcal</div></div>
     </div>
-    ${session.exercises.map(ex=>{
-      const exDef = findExercise(ex.exId);
-      const isAssisted = !!(exDef && exDef.assisted);
-      return `
-      <div class="mb-12">
-        <div class="settings-row-label mb-8">${ex.name}${isAssisted ? ' <span class="text-faint text-sm">(assisted — lower is better)</span>' : ''}</div>
-        ${ex.sets.map((s,i)=>{
-          if(s.isWalk){
-            return `<div class="text-sm text-muted">${s.duration} min @ ${s.speed} km/h, ${s.incline}% incline</div>`;
-          }
-          const wNum = parseFloat(s.weight);
-          const w = kgToDisplay(isNaN(wNum) ? 0 : wNum);
-          const wDisplay = (s.weight===0 || s.weight==='0' || w>0) ? w : '–';
-          const diffLabel = {easy:'Easy', medium:'Medium', hard:'Hard'}[s.difficulty] || 'Medium';
-          return `<div class="text-sm text-muted num">Set ${i+1}: ${wDisplay} ${unitLabel()}${isAssisted?' assist':''} × ${s.reps||'–'} reps · ${diffLabel}${s.warmup?' · <span style="color:var(--cyan);">Warm-up</span>':''}</div>`;
-        }).join('')}
-        ${ex.notes ? `<div class="text-sm text-faint mt-4">"${ex.notes}"</div>` : ''}
-      </div>
-    `;}).join('')}
+    ${session.exercises.map(ex=>renderSessionExerciseCard(ex)).join('')}
     <button class="btn btn-danger btn-block mt-16" id="btnDeleteSession" data-del="${session.id}">Delete this session</button>
   `;
   openSheet('sheetExerciseDetail');
+
+  content.querySelectorAll('[data-video-thumb]').forEach(el=>{
+    el.addEventListener('click', (e)=>{
+      e.stopPropagation();
+      window.open(el.dataset.videoThumb, '_blank', 'noopener');
+    });
+  });
+
   document.getElementById('btnDeleteSession').addEventListener('click', (e)=>{
     if(confirm('Delete this session? This cannot be undone.')){
       state.sessions = state.sessions.filter(s=>s.id!==e.target.dataset.del);
@@ -2370,6 +2382,63 @@ function showSessionDetail(session){
       toast('Session deleted');
     }
   });
+}
+
+function renderSessionExerciseCard(ex){
+  const exDef = findExercise(ex.exId);
+  const isAssisted = !!(exDef && exDef.assisted);
+  const isWalk = ex.sets.length===1 && ex.sets[0].isWalk;
+  const icon = exDef ? exDef.icon : '🏋️';
+
+  const videoId = exDef ? getYouTubeId(exDef.videoUrl) : null;
+  const thumbHtml = videoId ? `
+    <div class="session-ex-video-thumb" data-video-thumb="${exDef.videoUrl}" title="Watch tutorial">
+      <img src="https://img.youtube.com/vi/${videoId}/hqdefault.jpg" alt="" loading="lazy">
+      <div class="play-badge"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></div>
+    </div>
+  ` : '';
+
+  if(isWalk){
+    const w = ex.sets[0];
+    return `<div class="session-ex-card">
+      <div class="session-ex-card-header">
+        <div class="session-ex-card-icon">🚶</div>
+        <div class="session-ex-card-name">${ex.name}</div>
+      </div>
+      <div class="session-walk-summary">
+        <div class="session-walk-stat"><div class="v num">${w.speed}</div><div class="l">km/h</div></div>
+        <div class="session-walk-stat"><div class="v num">${w.incline}%</div><div class="l">Incline</div></div>
+        <div class="session-walk-stat"><div class="v num">${w.duration}</div><div class="l">Minutes</div></div>
+      </div>
+    </div>`;
+  }
+
+  const rows = ex.sets.map((s,i)=>{
+    const wNum = parseFloat(s.weight);
+    const w = kgToDisplay(isNaN(wNum) ? 0 : wNum);
+    const wDisplay = (s.weight===0 || s.weight==='0' || w>0) ? w : '–';
+    const diffKey = s.difficulty || 'medium';
+    const diffLabel = {easy:'Easy', medium:'Med', hard:'Hard'}[diffKey] || 'Med';
+    return `<tr class="${s.warmup?'warmup-row':''}">
+      <td class="set-num-cell num">${s.warmup?'W':i+1}</td>
+      <td class="num">${wDisplay}${isAssisted?'<span style="font-size:9px;"> ast</span>':''}</td>
+      <td class="num">${s.reps||'–'}</td>
+      <td><span class="session-set-diff-badge ${diffKey}">${diffLabel}</span></td>
+    </tr>`;
+  }).join('');
+
+  return `<div class="session-ex-card">
+    <div class="session-ex-card-header">
+      <div class="session-ex-card-icon">${icon}</div>
+      <div class="session-ex-card-name">${ex.name}${isAssisted?'<span class="assist-tag">Assisted — lower is better</span>':''}</div>
+      ${thumbHtml}
+    </div>
+    <table class="session-set-grid">
+      <thead><tr><th>#</th><th>${unitLabel()}</th><th>Reps</th><th>Effort</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    ${ex.notes ? `<div class="session-ex-notes">"${ex.notes}"</div>` : ''}
+  </div>`;
 }
 
 /* ---------------- SERVICE WORKER / PWA ---------------- */
