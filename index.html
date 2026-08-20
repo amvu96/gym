@@ -607,6 +607,18 @@ body.workout-active{padding-bottom:calc(96px + env(safe-area-inset-bottom));}
 
 /* ============ EXERCISE LIBRARY / PROGRESS ============ */
 /* ============ PROGRESS PAGE — SUMMARY & CHARTS ============ */
+.progress-toggle{
+  display:flex; gap:6px; background:var(--panel); border:1px solid var(--border);
+  border-radius:12px; padding:4px; margin-bottom:18px;
+}
+.progress-toggle-btn{
+  flex:1; background:none; border:none; padding:10px 4px; border-radius:9px;
+  font-size:12.5px; font-weight:700; text-transform:uppercase; letter-spacing:0.03em;
+  color:var(--text-faint); transition:background .18s, color .18s;
+}
+.progress-toggle-btn.active{background:var(--accent-dim); color:var(--accent);}
+.progress-panel{animation:fadein .2s ease;}
+
 .progress-summary-grid{
   display:grid; grid-template-columns:repeat(2,1fr); gap:8px; margin-bottom:16px;
 }
@@ -659,12 +671,44 @@ body.workout-active{padding-bottom:calc(96px + env(safe-area-inset-bottom));}
 .progress-ex-card{
   background:var(--panel); border:1px solid var(--border); border-radius:11px;
   padding:16px; margin-bottom:10px;
+  display:flex; align-items:center; gap:12px;
+  transition:border-color .15s, background .15s;
 }
-.progress-ex-header{display:flex; align-items:center; justify-content:space-between; margin-bottom:2px;}
-.progress-ex-header h3{font-size:14px; font-weight:700;}
-.progress-ex-stats{display:flex; gap:14px; margin-top:10px;}
-.progress-ex-stat .v{font-size:16px; font-weight:700; color:var(--accent);}
-.progress-ex-stat .l{font-size:9.5px; color:var(--text-faint); text-transform:uppercase; font-weight:600; letter-spacing:.03em;}
+.progress-ex-card:active{border-color:var(--accent-dim); background:var(--panel-raised);}
+.progress-ex-card-info{flex:1; min-width:0;}
+.progress-ex-header{display:flex; align-items:center; justify-content:space-between; margin-bottom:6px; gap:8px;}
+.progress-ex-header h3{font-size:14px; font-weight:700; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+.progress-ex-preview-row{display:flex; align-items:center; gap:10px;}
+.progress-ex-preview-stat{font-size:11.5px; color:var(--text-faint);}
+.progress-ex-preview-stat b{color:var(--accent); font-weight:700;}
+.progress-ex-chevron{color:var(--text-faint); flex-shrink:0;}
+.progress-ex-chevron svg{width:18px; height:18px;}
+
+/* Exercise progress detail sheet */
+.ex-progress-header{margin-bottom:18px;}
+.ex-progress-title{font-size:18px; font-weight:700; color:var(--text); margin-bottom:2px;}
+.ex-progress-subtitle{font-size:12px; color:var(--text-faint);}
+.ex-progress-big-chart{
+  background:var(--panel-raised); border:1px solid var(--border-soft); border-radius:14px;
+  padding:16px 12px 8px; margin-bottom:16px;
+}
+.ex-progress-big-chart svg{display:block; width:100%; height:auto;}
+.ex-progress-chart-labels{display:flex; justify-content:space-between; margin-top:6px; padding:0 2px;}
+.ex-progress-chart-labels span{font-size:9px; color:var(--text-faint); font-weight:600;}
+.ex-progress-stat-grid{display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-bottom:20px;}
+
+.ex-history-row{
+  display:flex; align-items:center; gap:12px; padding:12px 2px;
+  border-bottom:1px solid var(--border-soft);
+}
+.ex-history-row:last-child{border-bottom:none;}
+.ex-history-date{
+  width:42px; flex-shrink:0; text-align:center;
+}
+.ex-history-date .d{font-size:14px; font-weight:700; line-height:1.1;}
+.ex-history-date .m{font-size:8.5px; color:var(--text-faint); text-transform:uppercase; font-weight:700;}
+.ex-history-sets{flex:1; min-width:0; font-size:12px; color:var(--text-muted); line-height:1.5;}
+.ex-history-best{font-size:13px; font-weight:700; color:var(--accent); white-space:nowrap; flex-shrink:0;}
 
 /* ============ SETTINGS / DATA VIEW ============ */
 .settings-group{margin-bottom:24px;}
@@ -902,15 +946,23 @@ body.sheet-open{overflow:hidden;}
 
   <!-- ============ PROGRESS VIEW ============ -->
   <section class="view" id="view-progress">
-    <div id="progressSummary"></div>
-    <div id="progressVolumeChart"></div>
-    <div id="progressMuscleBreakdown"></div>
-
-    <h2 class="section-label">Exercises</h2>
-    <div class="field" style="margin-bottom:16px;">
-      <input type="text" id="progressSearchInput" placeholder="Search an exercise…" autocomplete="off">
+    <div class="progress-toggle" id="progressToggle">
+      <button class="progress-toggle-btn active" data-progress-tab="overview">Overview</button>
+      <button class="progress-toggle-btn" data-progress-tab="exercises">Exercises</button>
     </div>
-    <div id="progressList"></div>
+
+    <div id="progressPanelOverview" class="progress-panel">
+      <div id="progressSummary"></div>
+      <div id="progressVolumeChart"></div>
+      <div id="progressMuscleBreakdown"></div>
+    </div>
+
+    <div id="progressPanelExercises" class="progress-panel" style="display:none;">
+      <div class="field" style="margin-bottom:16px;">
+        <input type="text" id="progressSearchInput" placeholder="Search an exercise…" autocomplete="off">
+      </div>
+      <div id="progressList"></div>
+    </div>
   </section>
 
   <!-- ============ ROUTINES VIEW ============ -->
@@ -1105,6 +1157,13 @@ body.sheet-open{overflow:hidden;}
       Add exercise
     </button>
     <button class="btn btn-primary btn-block" id="btnSaveTemplateEdits">Save changes</button>
+  </div>
+</div>
+
+<div class="sheet sheet-fixed-height" id="sheetExerciseProgress">
+  <div class="sheet-handle-hitarea"><div class="sheet-handle"></div></div>
+  <div class="sheet-scroll-body">
+    <div id="exerciseProgressContent"></div>
   </div>
 </div>
 
