@@ -1698,6 +1698,9 @@ function openAddPastSessionPrompt(dateISO){
   const d = parseISO(dateISO);
   const isFuture = d > new Date(new Date().setHours(23,59,59,999));
   const label = d.toLocaleDateString(undefined,{weekday:'long', month:'long', day:'numeric', year:'numeric'});
+  // clear the fixed header/footer regions since this simple prompt doesn't use them
+  document.getElementById('exerciseDetailHeader').innerHTML = '';
+  document.getElementById('exerciseDetailFooter').innerHTML = '';
   const content = document.getElementById('exerciseDetailContent');
   content.innerHTML = `
     <div class="sheet-title">${label}</div>
@@ -2408,11 +2411,10 @@ document.addEventListener('click', (e)=>{
 });
 
 function showSessionDetail(session){
-  const content = document.getElementById('exerciseDetailContent');
   const d = parseISO(session.date);
   const isToday = session.date===todayISO();
 
-  content.innerHTML = `
+  document.getElementById('exerciseDetailHeader').innerHTML = `
     <div class="session-detail-hero">
       <div>
         <div class="session-detail-date">${d.toLocaleDateString(undefined,{weekday:'long', month:'long', day:'numeric'})}</div>
@@ -2424,9 +2426,15 @@ function showSessionDetail(session){
       <div class="stat-box"><div class="v num">${session.durationMin}</div><div class="l">Minutes</div></div>
       <div class="stat-box"><div class="v num" style="color:var(--positive);">${Math.round(sessionTotalKcal(session))}</div><div class="l">Kcal</div></div>
     </div>
-    ${session.exercises.map(ex=>renderSessionExerciseCard(ex)).join('')}
-    <button class="btn btn-danger btn-block mt-16" id="btnDeleteSession" data-del="${session.id}">Delete this session</button>
   `;
+
+  const content = document.getElementById('exerciseDetailContent');
+  content.innerHTML = session.exercises.map(ex=>renderSessionExerciseCard(ex)).join('');
+
+  document.getElementById('exerciseDetailFooter').innerHTML = `
+    <button class="btn btn-danger btn-block" id="btnDeleteSession" data-del="${session.id}">Delete this session</button>
+  `;
+
   openSheet('sheetExerciseDetail');
 
   content.querySelectorAll('[data-video-thumb]').forEach(el=>{
@@ -2485,7 +2493,7 @@ function renderSessionExerciseCard(ex){
     const diffLabel = {easy:'Easy', medium:'Med', hard:'Hard'}[diffKey] || 'Med';
     return `<tr class="${s.warmup?'warmup-row':''}">
       <td class="set-num-cell num">${s.warmup?'W':i+1}</td>
-      <td class="num">${wDisplay}${isAssisted?'<span style="font-size:9px;"> ast</span>':''}</td>
+      <td class="num">${wDisplay}</td>
       <td class="num">${s.reps||'–'}</td>
       <td><span class="session-set-diff-badge ${diffKey}">${diffLabel}</span></td>
     </tr>`;
@@ -2498,7 +2506,7 @@ function renderSessionExerciseCard(ex){
       ${thumbHtml}
     </div>
     <table class="session-set-grid">
-      <thead><tr><th>#</th><th>${unitLabel()}</th><th>Reps</th><th>Effort</th></tr></thead>
+      <thead><tr><th>#</th><th>${unitLabel()}${isAssisted?' assist':''}</th><th>Reps</th><th>Effort</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
     ${ex.notes ? `<div class="session-ex-notes">"${ex.notes}"</div>` : ''}
