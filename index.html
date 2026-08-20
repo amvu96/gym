@@ -1268,9 +1268,13 @@ body.sheet-open{overflow:hidden;}
   <button class="btn btn-primary btn-block mt-8" id="btnCloseSummary">Done</button>
 </div>
 
-<div class="sheet" id="sheetExerciseDetail">
+<div class="sheet sheet-fixed-height" id="sheetExerciseDetail">
   <div class="sheet-handle-hitarea"><div class="sheet-handle"></div></div>
-  <div id="exerciseDetailContent"></div>
+  <div id="exerciseDetailHeader"></div>
+  <div class="sheet-scroll-body">
+    <div id="exerciseDetailContent"></div>
+  </div>
+  <div class="sheet-footer" id="exerciseDetailFooter"></div>
 </div>
 
 <div class="sheet" id="sheetSaveTemplate">
