@@ -1665,7 +1665,166 @@ function openAddPastSessionPrompt(dateISO){
 }
 
 /* ---------------- PROGRESS VIEW ---------------- */
+function renderProgressSummary(){
+  const container = document.getElementById('progressSummary');
+  const totalSessions = state.sessions.length;
+  const streak = computeStreak();
+
+  // total volume = sum of weight x reps across all working, non-assisted sets
+  // (assisted-exercise "weight" is assistance, not resistance, so it doesn't
+  // belong in a volume total the same way)
+  let totalVolumeKg = 0;
+  let totalSets = 0;
+  state.sessions.forEach(s=>{
+    s.exercises.forEach(ex=>{
+      if(!ex.sets || !ex.sets.length || ex.sets[0].isWalk) return;
+      const exDef = findExercise(ex.exId);
+      if(exDef && exDef.assisted) return;
+      ex.sets.forEach(st=>{
+        if(st.warmup) return;
+        const w = parseFloat(st.weight)||0, r = parseFloat(st.reps)||0;
+        if(w>0 && r>0){ totalVolumeKg += w*r; totalSets++; }
+      });
+    });
+  });
+
+  const thisMonthKcal = state.sessions
+    .filter(s=>{
+      const d = parseISO(s.date), now = new Date();
+      return d.getFullYear()===now.getFullYear() && d.getMonth()===now.getMonth();
+    })
+    .reduce((a,s)=>a+sessionTotalKcal(s),0);
+
+  const displayVolume = kgToDisplay(Math.round(totalVolumeKg));
+
+  container.innerHTML = `
+    <h2 class="section-label">Overview</h2>
+    <div class="progress-summary-grid">
+      <div class="progress-summary-box">
+        <div class="v accent num">${totalSessions}</div>
+        <div class="l">Total sessions</div>
+      </div>
+      <div class="progress-summary-box">
+        <div class="v accent num">${streak}</div>
+        <div class="l">Day streak</div>
+      </div>
+      <div class="progress-summary-box">
+        <div class="v num">${displayVolume.toLocaleString()}${unitLabel()}</div>
+        <div class="l">Total volume lifted</div>
+      </div>
+      <div class="progress-summary-box">
+        <div class="v num">${Math.round(thisMonthKcal).toLocaleString()}</div>
+        <div class="l">Kcal this month</div>
+      </div>
+    </div>
+  `;
+}
+
+function renderVolumeChart(){
+  const container = document.getElementById('progressVolumeChart');
+  const weeks = 8;
+  const now = new Date();
+  const thisWeekStart = startOfWeek(now);
+
+  const buckets = []; // oldest to newest
+  for(let i=weeks-1; i>=0; i--){
+    const weekStart = new Date(thisWeekStart);
+    weekStart.setDate(weekStart.getDate() - i*7);
+    const weekEnd = new Date(weekStart);
+    weekEnd.setDate(weekEnd.getDate()+7);
+    buckets.push({start:weekStart, end:weekEnd, volume:0});
+  }
+
+  state.sessions.forEach(s=>{
+    const d = parseISO(s.date);
+    const bucket = buckets.find(b=>d>=b.start && d<b.end);
+    if(!bucket) return;
+    s.exercises.forEach(ex=>{
+      if(!ex.sets || !ex.sets.length || ex.sets[0].isWalk) return;
+      const exDef = findExercise(ex.exId);
+      if(exDef && exDef.assisted) return;
+      ex.sets.forEach(st=>{
+        if(st.warmup) return;
+        const w = parseFloat(st.weight)||0, r = parseFloat(st.reps)||0;
+        if(w>0 && r>0) bucket.volume += w*r;
+      });
+    });
+  });
+
+  const hasAnyData = buckets.some(b=>b.volume>0);
+  if(!hasAnyData){
+    container.innerHTML = '';
+    return;
+  }
+
+  const maxVolume = Math.max(...buckets.map(b=>b.volume), 1);
+
+  container.innerHTML = `
+    <div class="progress-chart-card">
+      <div class="progress-chart-title">
+        <h3>Weekly volume</h3>
+        <span class="sub">last ${weeks} weeks</span>
+      </div>
+      <div class="volume-bar-chart">
+        ${buckets.map((b,i)=>{
+          const pct = Math.max(3, Math.round((b.volume/maxVolume)*100));
+          const isCurrent = i===buckets.length-1;
+          return `<div class="volume-bar-col">
+            <div class="volume-bar ${isCurrent?'current-week':''}" style="height:${pct}%" title="${Math.round(kgToDisplay(b.volume))}${unitLabel()}"></div>
+          </div>`;
+        }).join('')}
+      </div>
+      <div class="volume-bar-labels">
+        ${buckets.map(b=>`<div class="volume-bar-label">${b.start.getDate()}/${b.start.getMonth()+1}</div>`).join('')}
+      </div>
+    </div>
+  `;
+}
+
+function renderMuscleBreakdown(){
+  const container = document.getElementById('progressMuscleBreakdown');
+  const counts = {};
+  state.sessions.forEach(s=>{
+    s.exercises.forEach(ex=>{
+      if(!ex.sets || !ex.sets.length || ex.sets[0].isWalk) return;
+      const workingSets = ex.sets.filter(st=>!st.warmup && (st.weight||st.reps||st.done));
+      if(!workingSets.length) return;
+      const exDef = findExercise(ex.exId);
+      const muscle = exDef ? exDef.muscle : 'other';
+      counts[muscle] = (counts[muscle]||0) + workingSets.length;
+    });
+  });
+
+  const entries = Object.entries(counts).sort((a,b)=>b[1]-a[1]).slice(0,6);
+  if(entries.length===0){
+    container.innerHTML = '';
+    return;
+  }
+  const maxCount = Math.max(...entries.map(e=>e[1]));
+
+  container.innerHTML = `
+    <div class="progress-chart-card">
+      <div class="progress-chart-title">
+        <h3>Sets by muscle group</h3>
+        <span class="sub">all time</span>
+      </div>
+      ${entries.map(([muscle,count])=>{
+        const pct = Math.max(4, Math.round((count/maxCount)*100));
+        return `<div class="muscle-bar-row">
+          <div class="muscle-bar-label">${capitalize(muscle)}</div>
+          <div class="muscle-bar-track"><div class="muscle-bar-fill" style="width:${pct}%"></div></div>
+          <div class="muscle-bar-count num">${count}</div>
+        </div>`;
+      }).join('')}
+    </div>
+  `;
+}
+
 function renderProgressList(){
+  renderProgressSummary();
+  renderVolumeChart();
+  renderMuscleBreakdown();
+
   const query = (document.getElementById('progressSearchInput').value||'').toLowerCase().trim();
 
   // build map of exId -> {name, sessions[]}
