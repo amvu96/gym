@@ -5,7 +5,7 @@
    ============================================================ */
 const EXERCISE_DB = [
   // ---- CHEST ----
-  {id:'bench-press-barbell', name:'Barbell Bench Press', muscle:'chest', icon:'🏋️', type:'strength', met:5.0},
+  {id:'bench-press-barbell', name:'Barbell Bench Press', muscle:'chest', icon:'🏋️', type:'strength', met:5.0, videoUrl:'https://www.youtube.com/watch?v=gRVjAtPip0Y'},
   {id:'bench-press-dumbbell', name:'Dumbbell Bench Press', muscle:'chest', icon:'🏋️', type:'strength', met:5.0},
   {id:'incline-bench-press', name:'Incline Bench Press', muscle:'chest', icon:'🏋️', type:'strength', met:5.0},
   {id:'decline-bench-press', name:'Decline Bench Press', muscle:'chest', icon:'🏋️', type:'strength', met:5.0},
@@ -18,12 +18,12 @@ const EXERCISE_DB = [
   {id:'chest-press-machine', name:'Chest Press Machine', muscle:'chest', icon:'🏋️', type:'strength', met:4.5},
 
   // ---- BACK ----
-  {id:'deadlift', name:'Deadlift', muscle:'back', icon:'🏋️', type:'strength', met:6.0},
+  {id:'deadlift', name:'Deadlift', muscle:'back', icon:'🏋️', type:'strength', met:6.0, videoUrl:'https://www.youtube.com/watch?v=p2OPUi4xGrM'},
   {id:'pull-up', name:'Pull-Up', muscle:'back', icon:'💪', type:'bodyweight', met:8.0},
   {id:'chin-up', name:'Chin-Up', muscle:'back', icon:'💪', type:'bodyweight', met:8.0},
   {id:'pull-up-assisted', name:'Assisted Pull-Up', muscle:'back', icon:'💪', type:'strength', met:5.5, assisted:true},
   {id:'lat-pulldown', name:'Lat Pulldown', muscle:'back', icon:'🏋️', type:'strength', met:5.0},
-  {id:'barbell-row', name:'Barbell Row', muscle:'back', icon:'🏋️', type:'strength', met:5.5},
+  {id:'barbell-row', name:'Barbell Row', muscle:'back', icon:'🏋️', type:'strength', met:5.5, videoUrl:'https://www.youtube.com/watch?v=ML1L5ytxLMY'},
   {id:'dumbbell-row', name:'Single-Arm Dumbbell Row', muscle:'back', icon:'🏋️', type:'strength', met:5.5},
   {id:'seated-cable-row', name:'Seated Cable Row', muscle:'back', icon:'🏋️', type:'strength', met:5.0},
   {id:'mid-row', name:'Mid Row', muscle:'back', icon:'🏋️', type:'strength', met:5.0},
@@ -34,7 +34,7 @@ const EXERCISE_DB = [
   {id:'shrugs', name:'Barbell Shrugs', muscle:'back', icon:'🏋️', type:'strength', met:3.5},
 
   // ---- LEGS ----
-  {id:'squat-barbell', name:'Barbell Back Squat', muscle:'legs', icon:'🦵', type:'strength', met:6.0},
+  {id:'squat-barbell', name:'Barbell Back Squat', muscle:'legs', icon:'🦵', type:'strength', met:6.0, videoUrl:'https://www.youtube.com/watch?v=8PMjqgR8Wa8'},
   {id:'front-squat', name:'Front Squat', muscle:'legs', icon:'🦵', type:'strength', met:6.0},
   {id:'leg-press', name:'Leg Press', muscle:'legs', icon:'🦵', type:'strength', met:5.0},
   {id:'lunges', name:'Walking Lunges', muscle:'legs', icon:'🦵', type:'bodyweight', met:5.0},
@@ -50,7 +50,7 @@ const EXERCISE_DB = [
   {id:'box-jump', name:'Box Jump', muscle:'legs', icon:'🦵', type:'bodyweight', met:8.0},
 
   // ---- SHOULDERS ----
-  {id:'overhead-press', name:'Overhead Press', muscle:'shoulders', icon:'🏋️', type:'strength', met:5.0},
+  {id:'overhead-press', name:'Overhead Press', muscle:'shoulders', icon:'🏋️', type:'strength', met:5.0, videoUrl:'https://www.youtube.com/watch?v=ZXpdJOLNoWw'},
   {id:'dumbbell-shoulder-press', name:'Dumbbell Shoulder Press', muscle:'shoulders', icon:'🏋️', type:'strength', met:5.0},
   {id:'lateral-raise', name:'Lateral Raise', muscle:'shoulders', icon:'🏋️', type:'strength', met:3.5},
   {id:'front-raise', name:'Front Raise', muscle:'shoulders', icon:'🏋️', type:'strength', met:3.5},
