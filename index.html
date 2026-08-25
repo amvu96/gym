@@ -1183,6 +1183,14 @@ body.sheet-open{overflow:hidden;}
           </div>
           <button class="toggle" id="toggleNotifications"></button>
         </div>
+        <div class="settings-row" id="btnBatterySettingsRow" style="cursor:pointer;">
+          <div>
+            <div class="settings-row-label">Improve notification reliability</div>
+            <div class="settings-row-sub">Allow background activity for this app</div>
+          </div>
+          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--text-faint); flex-shrink:0;"><path d="M9 18l6-6-6-6"/></svg>
+        </div>
+        <div id="twaDetectionDebug" class="text-sm text-faint" style="padding:8px 2px; display:none; word-break:break-all;"></div>
       </div>
     </div>
 
@@ -1212,6 +1220,7 @@ body.sheet-open{overflow:hidden;}
     </div>
 
     <p class="text-sm text-faint center mt-24">Gym Tracker · offline-first · data stays on your device</p>
+    <p class="text-sm text-faint center mt-4" id="appVersionLabel">v—</p>
   </section>
 
 </main>
