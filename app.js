@@ -9,7 +9,7 @@
 // stale/cached build can be identified at a glance instead of guessing —
 // if what you see on-device doesn't match what should have shipped, this
 // number tells you whether you're actually running the latest code.
-const APP_VERSION = 'v1.0.0';
+const APP_VERSION = 'v1.1.0';
 
 const STORAGE_KEY = 'gymtracker_data_v1';
 const LB_PER_KG = 2.20462;
@@ -1542,13 +1542,15 @@ function renderExerciseLibrary(){
     const lastPerf = getLastPerformance(e.id);
     return `
     <div class="exercise-list-item" data-ex-id="${e.id}">
-      <div class="ex-icon">${e.icon}</div>
-      <div class="ex-info">
-        <div class="ex-name">${e.name}${e.assisted ? ' <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#3ad6ff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:1px;"><path d="M12 5v14M5 12l7 7 7-7"/></svg>' : ''}</div>
-        <div class="ex-meta">${capitalize(e.muscle)} · ${capitalize(e.type)}${e.assisted ? ' · Assisted' : ''}</div>
-        ${lastPerf ? `<div class="ex-last-perf num">Last: ${lastPerf}</div>` : ''}
+      <div class="ex-tap-area" data-view-ex="${e.id}">
+        <div class="ex-icon">${e.icon}</div>
+        <div class="ex-info">
+          <div class="ex-name">${e.name}${e.assisted ? ' <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="#3ad6ff" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:1px;"><path d="M12 5v14M5 12l7 7 7-7"/></svg>' : ''}</div>
+          <div class="ex-meta">${capitalize(e.muscle)} · ${capitalize(e.type)}${e.assisted ? ' · Assisted' : ''}</div>
+          ${lastPerf ? `<div class="ex-last-perf num">Last: ${lastPerf}</div>` : ''}
+        </div>
       </div>
-      <button class="ex-add-btn" data-add-ex="${e.id}">
+      <button class="ex-add-btn" data-add-ex="${e.id}" aria-label="Add ${e.name}">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
       </button>
     </div>
@@ -1568,9 +1570,9 @@ function renderExerciseLibrary(){
       handleTap(btn.dataset.addEx);
     });
   });
-  container.querySelectorAll('.exercise-list-item').forEach(item=>{
+  container.querySelectorAll('[data-view-ex]').forEach(item=>{
     item.addEventListener('click', ()=>{
-      handleTap(item.dataset.exId);
+      openExercisePickerDetail(item.dataset.viewEx);
     });
   });
 }
@@ -2069,25 +2071,42 @@ document.getElementById('progressToggle').addEventListener('click', (e)=>{
   document.getElementById('progressPanelExercises').style.display = tab==='exercises' ? 'flex' : 'none';
 });
 
-/* ---------------- EXERCISE PROGRESS DETAIL SHEET ---------------- */
-function openExerciseProgressDetail(exId){
+/* ---------------- EXERCISE PROGRESS DETAIL SHEET ----------------
+   Shared by the Progress tab (informational only) and the exercise picker
+   (adds a "Watch tutorial" button when a video exists, plus an Add button
+   in the footer to add the exercise straight from this sheet).
+------------------------------------------------- */
+function openExerciseProgressDetail(exId, fromPicker){
   const exDef = findExercise(exId);
   if(!exDef) return;
   const isAssisted = !!exDef.assisted;
   const history = getExerciseHistory(exId); // sorted oldest -> newest, {date, maxWeight, minWeight, bestSetWeight, bestSetReps}
 
   const content = document.getElementById('exerciseProgressContent');
+  const footer = document.getElementById('exerciseProgressFooter');
+  const videoId = getYouTubeId(exDef.videoUrl);
+
+  const videoButtonHtml = videoId ? `
+    <button class="btn btn-secondary btn-block mb-12" id="btnWatchTutorial" data-video-url="${exDef.videoUrl}">
+      <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:6px; vertical-align:-2px;"><path d="M8 5v14l11-7z"/></svg>
+      Watch tutorial
+    </button>
+  ` : '';
 
   if(history.length===0){
     content.innerHTML = `
       <div class="ex-progress-header">
         <div class="ex-progress-title">${exDef.name}</div>
+        <div class="ex-progress-subtitle">${capitalize(exDef.muscle)}${isAssisted?' · Assisted':''}</div>
       </div>
+      ${videoButtonHtml}
       <div class="empty-state">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 3v18h18"/><path d="M18 8l-5 5-3-3-4 4"/></svg>
         <p>No history for this exercise yet.</p>
       </div>
     `;
+    footer.innerHTML = fromPicker ? `<button class="btn btn-primary btn-block" id="btnAddFromDetail" data-add-ex="${exId}">+ Add to session</button>` : '';
+    wireExerciseDetailButtons(exId, fromPicker);
     openSheet('sheetExerciseProgress');
     return;
   }
@@ -2113,6 +2132,7 @@ function openExerciseProgressDetail(exId){
       <div class="ex-progress-title">${exDef.name}</div>
       <div class="ex-progress-subtitle">${capitalize(exDef.muscle)} · ${history.length} session${history.length!==1?'s':''} logged</div>
     </div>
+    ${videoButtonHtml}
     ${isAssisted ? `<div class="pill mb-12" style="color:var(--cyan); border-color:#3ad6ff40; background:#3ad6ff14;">
       <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px;"><path d="M12 5v14M5 12l7 7 7-7"/></svg>
       Lower assistance is better
@@ -2145,7 +2165,35 @@ function openExerciseProgressDetail(exId){
       }).join('')}
     </div>
   `;
+  footer.innerHTML = fromPicker ? `<button class="btn btn-primary btn-block" id="btnAddFromDetail" data-add-ex="${exId}">+ Add to session</button>` : '';
+  wireExerciseDetailButtons(exId, fromPicker);
   openSheet('sheetExerciseProgress');
+}
+
+function wireExerciseDetailButtons(exId, fromPicker){
+  const videoBtn = document.getElementById('btnWatchTutorial');
+  if(videoBtn){
+    videoBtn.addEventListener('click', ()=>{
+      openVideoModal(videoBtn.dataset.videoUrl);
+    });
+  }
+  const addBtn = document.getElementById('btnAddFromDetail');
+  if(addBtn){
+    addBtn.addEventListener('click', ()=>{
+      closeSheet('sheetExerciseProgress');
+      if(pickerMode==='template'){
+        addExerciseToTemplateDraft(exId);
+      } else {
+        addExerciseToWorkout(exId);
+      }
+    });
+  }
+}
+
+// Entry point from the exercise picker specifically — kept as a distinct
+// name so the picker's tap handler reads clearly at the call site.
+function openExercisePickerDetail(exId){
+  openExerciseProgressDetail(exId, true);
 }
 
 // Larger progress-page version of the sparkline: same up-good/down-good
