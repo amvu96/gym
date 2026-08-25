@@ -436,6 +436,17 @@ main{max-width:640px; margin:0 auto; padding:18px 16px 40px;}
 .rest-timer-bar.done .rest-timer-ring-label{color:var(--positive);}
 .rest-timer-bar.done .rest-timer-title{color:var(--positive);}
 
+/* Exercise picker: search + filters + active-session pill stay fixed at
+   the top; only the exercise list scrolls beneath them. Height is the
+   viewport minus this view's top offset (sticky header + main's top
+   padding) and the tabbar clearance at the bottom. */
+#view-log{display:flex; flex-direction:column; height:calc(100dvh - 83px - 100px - 58px);}
+.exercise-picker-fixed{flex-shrink:0;}
+.exercise-picker-scroll{
+  flex:1; min-height:0; overflow-y:auto;
+  overscroll-behavior:contain; -webkit-overflow-scrolling:touch;
+  padding-bottom:12px;
+}
 .exercise-picker-search{margin-bottom:14px;}
 .exercise-picker-search input{
   width:100%; background:var(--input-bg); border:1px solid var(--border);
@@ -460,24 +471,26 @@ main{max-width:640px; margin:0 auto; padding:18px 16px 40px;}
 
 .exercise-list-item{
   display:flex; align-items:center; gap:12px;
-  padding:13px 14px; background:var(--panel); border:1px solid var(--border);
-  border-radius:10px; margin-bottom:8px; transition:border-color .15s;
+  padding:12px 12px; background:var(--panel); border:1px solid var(--border);
+  border-radius:12px; margin-bottom:8px; transition:border-color .15s, background .15s;
 }
-.exercise-list-item:active{border-color:var(--accent-dim);}
+.exercise-list-item:active{border-color:var(--accent-dim); background:var(--panel-raised);}
+.ex-tap-area{display:flex; align-items:center; gap:12px; flex:1; min-width:0; cursor:pointer;}
 .ex-icon{
-  width:38px; height:38px; border-radius:8px; flex-shrink:0;
+  width:40px; height:40px; border-radius:10px; flex-shrink:0;
   background:var(--panel-raised); display:flex; align-items:center; justify-content:center;
-  font-size:16px; border:1px solid var(--border-soft);
+  font-size:17px; border:1px solid var(--border-soft);
 }
 .ex-info{flex:1; min-width:0;}
 .ex-name{font-size:14px; font-weight:600;}
 .ex-meta{font-size:11px; color:var(--text-faint); margin-top:1px; text-transform:uppercase; letter-spacing:0.02em;}
 .ex-last-perf{font-size:11.5px; color:var(--accent); margin-top:3px; font-weight:600; opacity:0.85;}
 .ex-add-btn{
-  width:30px; height:30px; border-radius:7px; background:var(--accent-glow);
+  width:32px; height:32px; border-radius:9px; background:var(--accent-glow);
   border:1px solid var(--accent-dim); color:var(--accent); display:flex; align-items:center; justify-content:center;
-  flex-shrink:0;
+  flex-shrink:0; transition:background .15s, transform .1s;
 }
+.ex-add-btn:active{transform:scale(0.9); background:var(--accent-dim);}
 
 /* Reorderable exercise list inside the routine editor */
 .reorder-item{
@@ -1014,13 +1027,16 @@ body.sheet-open{overflow:hidden;}
 
   <!-- ============ LOG VIEW (exercise picker) ============ -->
   <section class="view" id="view-log">
-    <div id="activeSessionBarWrap"></div>
-
-    <div class="exercise-picker-search">
-      <input type="text" id="exerciseSearchInput" placeholder="Search exercises…" autocomplete="off">
+    <div class="exercise-picker-fixed">
+      <div id="activeSessionBarWrap"></div>
+      <div class="exercise-picker-search">
+        <input type="text" id="exerciseSearchInput" placeholder="Search exercises…" autocomplete="off">
+      </div>
+      <div class="muscle-filter-scroll" id="muscleFilterScroll"></div>
     </div>
-    <div class="muscle-filter-scroll" id="muscleFilterScroll"></div>
-    <div id="exerciseLibraryList"></div>
+    <div class="exercise-picker-scroll" id="exercisePickerScroll">
+      <div id="exerciseLibraryList"></div>
+    </div>
   </section>
 
   <!-- ============ ACTIVE WORKOUT VIEW ============ -->
@@ -1349,6 +1365,7 @@ body.sheet-open{overflow:hidden;}
   <div class="sheet-scroll-body">
     <div id="exerciseProgressContent"></div>
   </div>
+  <div class="sheet-footer" id="exerciseProgressFooter"></div>
 </div>
 
 <div class="toast" id="toast">
