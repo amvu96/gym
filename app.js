@@ -5,6 +5,12 @@
 (function(){
 'use strict';
 
+// Bump this on every code change (even small ones). Shown in Settings so a
+// stale/cached build can be identified at a glance instead of guessing —
+// if what you see on-device doesn't match what should have shipped, this
+// number tells you whether you're actually running the latest code.
+const APP_VERSION = 'v1.0.0';
+
 const STORAGE_KEY = 'gymtracker_data_v1';
 const LB_PER_KG = 2.20462;
 
@@ -2183,6 +2189,8 @@ function loadSettingsIntoForm(){
   document.getElementById('toggleUnits').classList.toggle('on', state.settings.useLbs);
   refreshNotificationsToggleUI();
   updateLastBackupLabel();
+  const versionEl = document.getElementById('appVersionLabel');
+  if(versionEl) versionEl.textContent = APP_VERSION;
 }
 
 function refreshNotificationsToggleUI(){
