@@ -237,8 +237,8 @@ function renderHome(){
   const streak = computeStreak();
   document.getElementById('streakText').innerHTML = `<b>${streak}</b> day streak`;
 
-  // week stats
-  const weekSessions = sessionsInLastNDays(7);
+  // week stats — calendar week (Mon-Sun), matching the M T W T F S S strip below
+  const weekSessions = sessionsThisCalendarWeek();
   const weekKcal = Math.round(weekSessions.reduce((a,s)=>a+sessionTotalKcal(s),0));
   document.getElementById('statWeekSessions').textContent = weekSessions.length;
   document.getElementById('statWeekKcal').textContent = weekKcal;
@@ -619,6 +619,11 @@ function startOfWeek(d){
   date.setDate(date.getDate()-day);
   date.setHours(0,0,0,0);
   return date;
+}
+
+function sessionsThisCalendarWeek(){
+  const weekStart = startOfWeek(new Date());
+  return state.sessions.filter(s=>parseISO(s.date) >= weekStart);
 }
 
 function sessionsInLastNDays(n){
@@ -2314,7 +2319,17 @@ function isLikelyAndroidTWA(){
 
 const batteryRow = document.getElementById('btnBatterySettingsRow');
 if(batteryRow){
-  if(!isLikelyAndroidTWA()){
+  const isAndroid = /Android/i.test(navigator.userAgent);
+  const detected = isLikelyAndroidTWA();
+  const debugEl = document.getElementById('twaDetectionDebug');
+  if(isAndroid && debugEl){
+    // Visible diagnostic (Android only) so this can be checked directly on
+    // a phone without needing remote devtools — shows exactly why the
+    // shortcut above is or isn't appearing.
+    debugEl.style.display = 'block';
+    debugEl.textContent = `Debug — referrer: "${document.referrer||'(empty)'}" · standalone: ${window.matchMedia('(display-mode: standalone)').matches} · fullscreen: ${window.matchMedia('(display-mode: fullscreen)').matches} · detected as TWA: ${detected}`;
+  }
+  if(!detected){
     // hide entirely for non-Android or non-installed contexts, since the
     // intent below simply won't do anything there
     batteryRow.style.display = 'none';
