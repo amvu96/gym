@@ -437,10 +437,18 @@ main{max-width:640px; margin:0 auto; padding:18px 16px 40px;}
 .rest-timer-bar.done .rest-timer-title{color:var(--positive);}
 
 /* Exercise picker: search + filters + active-session pill stay fixed at
-   the top; only the exercise list scrolls beneath them. Height is the
-   viewport minus this view's top offset (sticky header + main's top
-   padding) and the tabbar clearance at the bottom. */
-#view-log{display:flex; flex-direction:column; height:calc(100dvh - 83px - 100px - 58px);}
+   the top; only the exercise list scrolls beneath them. #view-log fills
+   the space between the sticky header and the tabbar; JS then measures
+   the fixed header's actual rendered height (it varies depending on
+   whether the "session active"/"building routine" pill is shown) and
+   sizes the scroll region to exactly fill what's left, rather than
+   guessing a constant that goes stale whenever that header's content
+   changes. */
+#view-log.active{
+  display:flex; flex-direction:column;
+  height:calc(100dvh - 83px - 100px);
+}
+main:has(#view-log.active){padding-bottom:0;}
 .exercise-picker-fixed{flex-shrink:0;}
 .exercise-picker-scroll{
   flex:1; min-height:0; overflow-y:auto;
