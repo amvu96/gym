@@ -9,7 +9,7 @@
 // stale/cached build can be identified at a glance instead of guessing —
 // if what you see on-device doesn't match what should have shipped, this
 // number tells you whether you're actually running the latest code.
-const APP_VERSION = 'v1.2.0';
+const APP_VERSION = 'v1.2.1';
 
 const STORAGE_KEY = 'gymtracker_data_v1';
 const LB_PER_KG = 2.20462;
@@ -22,6 +22,11 @@ let pickerMode = 'session'; // 'session' = adding to activeWorkout, 'template' =
 let workoutTimerInterval = null;
 let calCursor = new Date(); // month being viewed in calendar
 let customExercises = [];
+// Template IDs dismissed from today's "Scheduled for today" suggestion.
+// Intentionally in-memory only (not persisted/synced) — a dismissal is a
+// same-day "not today" choice, not data worth backing up, and naturally
+// resets on next load or the next calendar day either way.
+let dismissedTodayRoutines = new Set();
 
 function defaultState(){
   return {
@@ -283,7 +288,10 @@ function renderTodayRoutineSuggestion(){
   const todayIdx = (today.getDay()+6)%7; // 0=Mon, matches the app's existing convention
   const todayIso = todayISO();
 
-  const scheduled = (state.templates||[]).filter(t=>t.scheduledDays && t.scheduledDays.includes(todayIdx));
+  const scheduled = (state.templates||[])
+    .filter(t=>t.scheduledDays && t.scheduledDays.includes(todayIdx))
+    .filter(t=>!dismissedTodayRoutines.has(t.id));
+
   if(scheduled.length===0){
     wrap.style.display = 'none';
     return;
@@ -292,32 +300,65 @@ function renderTodayRoutineSuggestion(){
   const alreadyLogged = state.sessions.some(s=>s.date===todayIso);
 
   wrap.style.display = 'block';
-  wrap.innerHTML = scheduled.map((t,i)=>`
-    <div class="today-routine-card ${i>0?'mt-8':''}">
-      <div class="today-routine-label">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
-        Scheduled for today
-      </div>
-      <div class="today-routine-header">
-        <div class="template-icon">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+  wrap.innerHTML = `
+    <div class="today-routine-carousel" id="todayRoutineCarousel">
+      ${scheduled.map(t=>`
+        <div class="today-routine-card">
+          <button class="today-routine-dismiss" data-dismiss-today-routine="${t.id}" aria-label="Not today">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+          </button>
+          <div class="today-routine-label">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+            Scheduled for today
+          </div>
+          <div class="today-routine-header">
+            <div class="template-icon">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+            </div>
+            <div>
+              <div class="today-routine-name">${t.name}</div>
+              <div class="today-routine-meta">${t.exIds.length} exercise${t.exIds.length!==1?'s':''}${alreadyLogged?' · Already logged today':''}</div>
+            </div>
+          </div>
+          <div class="today-routine-actions">
+            <button class="btn btn-primary" data-start-today-routine="${t.id}">${alreadyLogged?'Start again':'Start routine'}</button>
+          </div>
         </div>
-        <div>
-          <div class="today-routine-name">${t.name}</div>
-          <div class="today-routine-meta">${t.exIds.length} exercise${t.exIds.length!==1?'s':''}${alreadyLogged?' · Already logged today':''}</div>
-        </div>
-      </div>
-      <div class="today-routine-actions">
-        <button class="btn btn-primary" data-start-today-routine="${t.id}">${alreadyLogged?'Start again':'Start routine'}</button>
-      </div>
+      `).join('')}
     </div>
-  `).join('');
+    ${scheduled.length>1 ? `<div class="routine-carousel-dots" id="todayRoutineDots">
+      ${scheduled.map((_,i)=>`<div class="routine-carousel-dot ${i===0?'active':''}" data-dot="${i}"></div>`).join('')}
+    </div>` : ''}
+  `;
 
   wrap.querySelectorAll('[data-start-today-routine]').forEach(btn=>{
     btn.addEventListener('click', ()=>{
       startWorkoutFromTemplate(btn.dataset.startTodayRoutine);
     });
   });
+  wrap.querySelectorAll('[data-dismiss-today-routine]').forEach(btn=>{
+    btn.addEventListener('click', (e)=>{
+      e.stopPropagation();
+      dismissedTodayRoutines.add(btn.dataset.dismissTodayRoutine);
+      renderTodayRoutineSuggestion();
+    });
+  });
+
+  if(scheduled.length>1){
+    const carousel = document.getElementById('todayRoutineCarousel');
+    const dotsWrap = document.getElementById('todayRoutineDots');
+    carousel.onscroll = ()=>{
+      clearTimeout(carousel._scrollDebounce);
+      carousel._scrollDebounce = setTimeout(()=>{
+        const cardWidth = carousel.clientWidth;
+        if(cardWidth===0) return;
+        const activeIdx = Math.round(carousel.scrollLeft / cardWidth);
+        dotsWrap.querySelectorAll('.routine-carousel-dot').forEach((dot,i)=>{
+          dot.classList.toggle('active', i===activeIdx);
+        });
+      }, 60);
+    };
+  }
 }
 
 function renderTemplatesQuickRow(){
