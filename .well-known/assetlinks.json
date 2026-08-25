@@ -3,6 +3,6 @@
       "target": {
         "namespace": "android_app",
         "package_name": "eu.nullvault.gym.twa",
-        "sha256_cert_fingerprints": ["8E:57:E5:7B:B0:43:D2:28:E8:63:41:63:F4:A9:03:17:63:64:0A:8C:10:9A:55:29:D6:F3:ED:10:59:DA:5B:FB"]
+        "sha256_cert_fingerprints": ["7E:F2:C2:64:B0:C4:45:E1:90:3F:A6:93:3F:AC:61:0D:4B:2B:7C:75:70:4E:55:89:6A:DE:66:E5:7E:26:C4:D7"]
       }
     }]
