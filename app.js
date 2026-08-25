@@ -9,7 +9,7 @@
 // stale/cached build can be identified at a glance instead of guessing —
 // if what you see on-device doesn't match what should have shipped, this
 // number tells you whether you're actually running the latest code.
-const APP_VERSION = 'v1.2.1';
+const APP_VERSION = 'v1.2.2';
 
 const STORAGE_KEY = 'gymtracker_data_v1';
 const LB_PER_KG = 2.20462;
@@ -311,17 +311,17 @@ function renderTodayRoutineSuggestion(){
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
             Scheduled for today
           </div>
-          <div class="today-routine-header">
+          <div class="today-routine-header" data-start-today-routine="${t.id}">
             <div class="template-icon">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
             </div>
-            <div>
+            <div class="today-routine-info">
               <div class="today-routine-name">${t.name}</div>
               <div class="today-routine-meta">${t.exIds.length} exercise${t.exIds.length!==1?'s':''}${alreadyLogged?' · Already logged today':''}</div>
             </div>
-          </div>
-          <div class="today-routine-actions">
-            <button class="btn btn-primary" data-start-today-routine="${t.id}">${alreadyLogged?'Start again':'Start routine'}</button>
+            <div class="today-routine-chevron">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+            </div>
           </div>
         </div>
       `).join('')}
@@ -331,9 +331,9 @@ function renderTodayRoutineSuggestion(){
     </div>` : ''}
   `;
 
-  wrap.querySelectorAll('[data-start-today-routine]').forEach(btn=>{
-    btn.addEventListener('click', ()=>{
-      startWorkoutFromTemplate(btn.dataset.startTodayRoutine);
+  wrap.querySelectorAll('[data-start-today-routine]').forEach(el=>{
+    el.addEventListener('click', ()=>{
+      startWorkoutFromTemplate(el.dataset.startTodayRoutine);
     });
   });
   wrap.querySelectorAll('[data-dismiss-today-routine]').forEach(btn=>{
