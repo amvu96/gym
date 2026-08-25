@@ -9,7 +9,7 @@
 // stale/cached build can be identified at a glance instead of guessing —
 // if what you see on-device doesn't match what should have shipped, this
 // number tells you whether you're actually running the latest code.
-const APP_VERSION = 'v1.1.1';
+const APP_VERSION = 'v1.2.0';
 
 const STORAGE_KEY = 'gymtracker_data_v1';
 const LB_PER_KG = 2.20462;
@@ -274,6 +274,50 @@ function renderHome(){
 
   renderRecentSessions();
   renderTemplatesQuickRow();
+  renderTodayRoutineSuggestion();
+}
+
+function renderTodayRoutineSuggestion(){
+  const wrap = document.getElementById('todayRoutineCard');
+  const today = new Date();
+  const todayIdx = (today.getDay()+6)%7; // 0=Mon, matches the app's existing convention
+  const todayIso = todayISO();
+
+  const scheduled = (state.templates||[]).filter(t=>t.scheduledDays && t.scheduledDays.includes(todayIdx));
+  if(scheduled.length===0){
+    wrap.style.display = 'none';
+    return;
+  }
+
+  const alreadyLogged = state.sessions.some(s=>s.date===todayIso);
+
+  wrap.style.display = 'block';
+  wrap.innerHTML = scheduled.map((t,i)=>`
+    <div class="today-routine-card ${i>0?'mt-8':''}">
+      <div class="today-routine-label">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/></svg>
+        Scheduled for today
+      </div>
+      <div class="today-routine-header">
+        <div class="template-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+        </div>
+        <div>
+          <div class="today-routine-name">${t.name}</div>
+          <div class="today-routine-meta">${t.exIds.length} exercise${t.exIds.length!==1?'s':''}${alreadyLogged?' · Already logged today':''}</div>
+        </div>
+      </div>
+      <div class="today-routine-actions">
+        <button class="btn btn-primary" data-start-today-routine="${t.id}">${alreadyLogged?'Start again':'Start routine'}</button>
+      </div>
+    </div>
+  `).join('');
+
+  wrap.querySelectorAll('[data-start-today-routine]').forEach(btn=>{
+    btn.addEventListener('click', ()=>{
+      startWorkoutFromTemplate(btn.dataset.startTodayRoutine);
+    });
+  });
 }
 
 function renderTemplatesQuickRow(){
@@ -414,9 +458,31 @@ function openTemplateEditor(templateId){
   const template = templateId ? state.templates.find(t=>t.id===templateId) : null;
   // working copy of exercise ids so cancelling (closing without saving) doesn't mutate state
   editingTemplateExIds = template ? [...template.exIds] : [];
+  editingTemplateScheduledDays = template && template.scheduledDays ? [...template.scheduledDays] : [];
   refreshTemplateEditorSheet(template ? template.name : '');
+  renderDayPicker();
   openSheet('sheetEditTemplate');
 }
+
+function renderDayPicker(){
+  document.querySelectorAll('#editTemplateDayPicker .day-picker-chip').forEach(chip=>{
+    const day = +chip.dataset.day;
+    chip.classList.toggle('selected', editingTemplateScheduledDays.includes(day));
+  });
+}
+
+document.getElementById('editTemplateDayPicker').addEventListener('click', (e)=>{
+  const chip = e.target.closest('.day-picker-chip');
+  if(!chip) return;
+  const day = +chip.dataset.day;
+  const idx = editingTemplateScheduledDays.indexOf(day);
+  if(idx>=0){
+    editingTemplateScheduledDays.splice(idx,1);
+  } else {
+    editingTemplateScheduledDays.push(day);
+  }
+  renderDayPicker();
+});
 
 function refreshTemplateEditorSheet(nameValue){
   document.getElementById('editTemplateTitle').textContent = editingTemplateId ? 'Edit template' : 'New template';
@@ -426,6 +492,7 @@ function refreshTemplateEditorSheet(nameValue){
 }
 
 let editingTemplateExIds = [];
+let editingTemplateScheduledDays = [];
 
 function renderTemplateEditorExerciseList(){
   const list = document.getElementById('editTemplateExerciseList');
@@ -589,12 +656,13 @@ document.getElementById('btnSaveTemplateEdits').addEventListener('click', ()=>{
 
   if(editingTemplateId){
     const t = state.templates.find(x=>x.id===editingTemplateId);
-    if(t){ t.name = name; t.exIds = [...editingTemplateExIds]; }
+    if(t){ t.name = name; t.exIds = [...editingTemplateExIds]; t.scheduledDays = [...editingTemplateScheduledDays]; }
   } else {
     state.templates.push({
       id: uid(),
       name,
       exIds: [...editingTemplateExIds],
+      scheduledDays: [...editingTemplateScheduledDays],
       createdAt: Date.now()
     });
   }
@@ -1487,6 +1555,7 @@ document.getElementById('btnConfirmSaveTemplate').addEventListener('click', ()=>
     id: uid(),
     name,
     exIds,
+    scheduledDays: [],
     createdAt: Date.now()
   });
   saveState();
@@ -1589,6 +1658,7 @@ function addExerciseToTemplateDraft(exId){
   pickerMode = 'session';
   showView('templates');
   refreshTemplateEditorSheet(); // preserves name input, since nameValue is undefined
+  renderDayPicker();
   openSheet('sheetEditTemplate');
 }
 
@@ -2105,7 +2175,7 @@ function openExerciseProgressDetail(exId, fromPicker){
         <p>No history for this exercise yet.</p>
       </div>
     `;
-    footer.innerHTML = fromPicker ? `<button class="btn btn-primary btn-block" id="btnAddFromDetail" data-add-ex="${exId}">+ Add to session</button>` : '';
+    footer.innerHTML = fromPicker ? `<button class="btn btn-primary btn-block" id="btnAddFromDetail" data-add-ex="${exId}">+ ${pickerMode==='template'?'Add to routine':'Add to session'}</button>` : '';
     wireExerciseDetailButtons(exId, fromPicker);
     openSheet('sheetExerciseProgress');
     return;
@@ -2165,7 +2235,7 @@ function openExerciseProgressDetail(exId, fromPicker){
       }).join('')}
     </div>
   `;
-  footer.innerHTML = fromPicker ? `<button class="btn btn-primary btn-block" id="btnAddFromDetail" data-add-ex="${exId}">+ Add to session</button>` : '';
+  footer.innerHTML = fromPicker ? `<button class="btn btn-primary btn-block" id="btnAddFromDetail" data-add-ex="${exId}">+ ${pickerMode==='template'?'Add to routine':'Add to session'}</button>` : '';
   wireExerciseDetailButtons(exId, fromPicker);
   openSheet('sheetExerciseProgress');
 }
