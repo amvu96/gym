@@ -849,6 +849,13 @@ body.workout-active{padding-bottom:calc(96px + env(safe-area-inset-bottom));}
 .ex-progress-chart-labels span{font-size:9px; color:var(--text-faint); font-weight:600;}
 .ex-progress-stat-grid{display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-bottom:20px;}
 
+.body-weight-current{display:flex; align-items:flex-end; justify-content:space-between; margin-bottom:14px;}
+.body-weight-current-value{font-size:28px; font-weight:700; color:var(--text); line-height:1;}
+.body-weight-unit{font-size:14px; color:var(--text-faint); font-weight:600; margin-left:3px;}
+.body-weight-current-date{font-size:11px; color:var(--text-faint); margin-top:4px;}
+.body-weight-change{font-size:14px; font-weight:700; text-align:right;}
+.body-weight-change-label{display:block; font-size:9px; color:var(--text-faint); font-weight:600; text-transform:uppercase; letter-spacing:.03em; margin-top:2px;}
+
 .ex-history-row{
   display:flex; align-items:center; gap:12px; padding:12px 2px;
   border-bottom:1px solid var(--border-soft);
@@ -927,6 +934,16 @@ body.workout-active{padding-bottom:calc(96px + env(safe-area-inset-bottom));}
 
 /* ============ SETTINGS / DATA VIEW ============ */
 .settings-group{margin-bottom:24px;}
+
+.notif-explainer-step{display:flex; gap:12px; margin-bottom:14px; align-items:flex-start;}
+.notif-explainer-num{
+  width:22px; height:22px; border-radius:50%; flex-shrink:0;
+  background:var(--accent-dim); color:var(--accent); font-size:11px; font-weight:700;
+  display:flex; align-items:center; justify-content:center; margin-top:1px;
+}
+.notif-explainer-text{font-size:13px; color:var(--text-muted); line-height:1.45;}
+.notif-explainer-text b{color:var(--text); font-weight:700;}
+
 .settings-row{
   display:flex; align-items:center; justify-content:space-between;
   padding:14px 4px; border-bottom:1px solid var(--border-soft);
@@ -1206,6 +1223,7 @@ body.sheet-open{overflow:hidden;}
       <div id="progressSummary"></div>
       <div id="progressVolumeChart"></div>
       <div id="progressMuscleBreakdown"></div>
+      <div id="bodyWeightCard"></div>
     </div>
 
     <div id="progressPanelExercises" class="progress-panel" style="display:none;">
@@ -1289,14 +1307,6 @@ body.sheet-open{overflow:hidden;}
           </div>
           <button class="toggle" id="toggleNotifications"></button>
         </div>
-        <div class="settings-row" id="btnBatterySettingsRow" style="cursor:pointer;">
-          <div>
-            <div class="settings-row-label">Improve notification reliability</div>
-            <div class="settings-row-sub">Allow background activity for this app</div>
-          </div>
-          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="color:var(--text-faint); flex-shrink:0;"><path d="M9 18l6-6-6-6"/></svg>
-        </div>
-        <div id="twaDetectionDebug" class="text-sm text-faint" style="padding:8px 2px; display:none; word-break:break-all;"></div>
       </div>
     </div>
 
@@ -1398,6 +1408,20 @@ body.sheet-open{overflow:hidden;}
   <button class="btn btn-primary btn-block" id="btnSaveWalk">Save to today's log</button>
 </div>
 
+<div class="sheet" id="sheetLogWeight">
+  <div class="sheet-handle-hitarea"><div class="sheet-handle"></div></div>
+  <div class="sheet-title">Log weigh-in</div>
+  <div class="field">
+    <label>Weight (<span id="logWeightUnitLabel">kg</span>)</label>
+    <input type="number" id="logWeightInput" inputmode="decimal" step="0.1" placeholder="75">
+  </div>
+  <div class="field">
+    <label>Date</label>
+    <input type="date" id="logWeightDate">
+  </div>
+  <button class="btn btn-primary btn-block" id="btnSaveWeightLog">Save</button>
+</div>
+
 <div class="sheet" id="sheetSessionSummary">
   <div class="sheet-handle-hitarea"><div class="sheet-handle"></div></div>
   <div class="sheet-title">Session complete</div>
@@ -1423,6 +1447,28 @@ body.sheet-open{overflow:hidden;}
     <input type="text" id="templateNameInput" placeholder="e.g. Monday — Push day" autocomplete="off">
   </div>
   <button class="btn btn-primary btn-block" id="btnConfirmSaveTemplate">Save routine</button>
+</div>
+
+<div class="sheet" id="sheetNotificationsExplainer">
+  <div class="sheet-handle-hitarea"><div class="sheet-handle"></div></div>
+  <div class="sheet-title">Rest timer notifications</div>
+  <p class="text-sm text-muted mb-16">Your phone will show a notification when rest starts, updates it with the time left, and alerts you again when it's over — so you don't have to keep the app open and watch the countdown.</p>
+
+  <div class="notif-explainer-step">
+    <div class="notif-explainer-num">1</div>
+    <div class="notif-explainer-text">Your browser will ask for notification permission next — tap <b>Allow</b>.</div>
+  </div>
+  <div class="notif-explainer-step">
+    <div class="notif-explainer-num">2</div>
+    <div class="notif-explainer-text">This works while the app is open or briefly in the background. If your phone kills the app in the background (common with aggressive battery savers), notifications may stop — reopening the app resumes them.</div>
+  </div>
+  <div class="notif-explainer-step">
+    <div class="notif-explainer-num">3</div>
+    <div class="notif-explainer-text">You can turn this off anytime from this same Settings screen.</div>
+  </div>
+
+  <button class="btn btn-primary btn-block mt-16" id="btnNotificationsExplainerContinue">Continue</button>
+  <button class="btn btn-secondary btn-block mt-8" id="btnNotificationsExplainerCancel">Not now</button>
 </div>
 
 <div class="sheet sheet-fixed-height" id="sheetEditTemplate">
