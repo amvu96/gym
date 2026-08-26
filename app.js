@@ -9,7 +9,7 @@
 // stale/cached build can be identified at a glance instead of guessing —
 // if what you see on-device doesn't match what should have shipped, this
 // number tells you whether you're actually running the latest code.
-const APP_VERSION = 'v1.5.0';
+const APP_VERSION = 'v1.6.0';
 
 const STORAGE_KEY = 'gymtracker_data_v1';
 const LB_PER_KG = 2.20462;
@@ -39,7 +39,9 @@ function defaultState(){
       notificationsEnabled: false
     },
     customExercises: [],
-    templates: []           // {id, name, exIds:[...], createdAt}
+    templates: [],          // {id, name, exIds:[...], createdAt}
+    bodyWeightLogs: []      // {id, date(ISO), weightKg} — separate from settings.bodyWeightKg,
+                            // which stays purely the input to the kcal-estimate formula
   };
 }
 
@@ -2273,10 +2275,101 @@ function renderMuscleBreakdown(){
   `;
 }
 
+function renderBodyWeightCard(){
+  const container = document.getElementById('bodyWeightCard');
+  const logs = [...(state.bodyWeightLogs||[])].sort((a,b)=>a.date.localeCompare(b.date));
+
+  if(logs.length===0){
+    container.innerHTML = `
+      <div class="progress-chart-card">
+        <div class="progress-chart-title">
+          <h3>Body weight</h3>
+        </div>
+        <p class="text-sm text-faint mb-12">No weigh-ins logged yet. A weekly check-in is plenty to see a trend.</p>
+        <button class="btn btn-secondary btn-block" id="btnOpenWeightLog">+ Log weigh-in</button>
+      </div>
+    `;
+    document.getElementById('btnOpenWeightLog').addEventListener('click', openWeightLogSheet);
+    return;
+  }
+
+  const latest = logs[logs.length-1];
+  const first = logs[0];
+  const latestDisplay = kgToDisplay(latest.weightKg);
+  const changeKg = latest.weightKg - first.weightKg;
+  const changeDisplay = kgToDisplay(Math.abs(changeKg));
+  const changeSign = changeKg>0 ? '+' : (changeKg<0 ? '−' : '');
+  const changeColor = changeKg===0 ? 'var(--text-faint)' : (changeKg>0 ? 'var(--accent)' : 'var(--cyan)');
+
+  const points = logs.map(l=>kgToDisplay(l.weightKg));
+  const chart = points.length>=2 ? buildBigProgressChart(points, false) : '';
+  const chartDates = logs.slice(-12).map(l=>{
+    const d = parseISO(l.date);
+    return `${d.getDate()}/${d.getMonth()+1}`;
+  });
+
+  container.innerHTML = `
+    <div class="progress-chart-card">
+      <div class="progress-chart-title">
+        <h3>Body weight</h3>
+        <span class="sub">${logs.length} weigh-in${logs.length!==1?'s':''}</span>
+      </div>
+      <div class="body-weight-current">
+        <div>
+          <div class="body-weight-current-value num">${latestDisplay}<span class="body-weight-unit">${unitLabel()}</span></div>
+          <div class="body-weight-current-date">Last logged ${parseISO(latest.date).toLocaleDateString(undefined,{month:'short',day:'numeric'})}</div>
+        </div>
+        ${logs.length>1 ? `<div class="body-weight-change" style="color:${changeColor};">${changeSign}${changeDisplay}${unitLabel()}<span class="body-weight-change-label">since first log</span></div>` : ''}
+      </div>
+      ${chart ? `<div class="ex-progress-big-chart">
+        ${chart}
+        <div class="ex-progress-chart-labels">
+          ${chartDates.length ? `<span>${chartDates[0]}</span><span>${chartDates[chartDates.length-1]}</span>` : ''}
+        </div>
+      </div>` : ''}
+      <button class="btn btn-secondary btn-block" id="btnOpenWeightLog">+ Log weigh-in</button>
+    </div>
+  `;
+  document.getElementById('btnOpenWeightLog').addEventListener('click', openWeightLogSheet);
+}
+
+function openWeightLogSheet(){
+  document.getElementById('logWeightUnitLabel').textContent = unitLabel();
+  const currentDisplay = kgToDisplay(state.settings.bodyWeightKg || 75);
+  document.getElementById('logWeightInput').value = currentDisplay || '';
+  document.getElementById('logWeightDate').value = todayISO();
+  openSheet('sheetLogWeight');
+}
+
+document.getElementById('btnSaveWeightLog').addEventListener('click', ()=>{
+  const rawValue = parseFloat(document.getElementById('logWeightInput').value);
+  const dateVal = document.getElementById('logWeightDate').value || todayISO();
+  if(isNaN(rawValue) || rawValue<=0){
+    toast('Enter a valid weight');
+    return;
+  }
+  const weightKg = displayToKgIfNeeded(rawValue);
+
+  if(!state.bodyWeightLogs) state.bodyWeightLogs = [];
+  // one entry per date — logging again on the same day updates it rather
+  // than creating a duplicate point on the trend chart
+  const existingIdx = state.bodyWeightLogs.findIndex(l=>l.date===dateVal);
+  if(existingIdx>=0){
+    state.bodyWeightLogs[existingIdx].weightKg = weightKg;
+  } else {
+    state.bodyWeightLogs.push({id:uid(), date:dateVal, weightKg});
+  }
+  saveState();
+  closeSheet('sheetLogWeight');
+  toast('Weigh-in saved');
+  renderBodyWeightCard();
+});
+
 function renderProgressList(){
   renderProgressSummary();
   renderVolumeChart();
   renderMuscleBreakdown();
+  renderBodyWeightCard();
 
   const query = (document.getElementById('progressSearchInput').value||'').toLowerCase().trim();
 
@@ -2641,74 +2734,27 @@ document.getElementById('toggleUnits').addEventListener('click', (e)=>{
 document.getElementById('toggleNotifications').addEventListener('click', async ()=>{
   const wantsOn = !state.settings.notificationsEnabled;
   if(wantsOn){
-    const granted = await requestNotificationPermission();
-    state.settings.notificationsEnabled = granted;
-    if(granted) toast('Rest timer notifications on');
-  } else {
-    state.settings.notificationsEnabled = false;
-    toast('Rest timer notifications off');
+    openSheet('sheetNotificationsExplainer');
+    return; // actual permission request happens after the user taps Continue
   }
+  state.settings.notificationsEnabled = false;
+  toast('Rest timer notifications off');
   saveState();
   refreshNotificationsToggleUI();
 });
 
-/* ---------------- BATTERY / BACKGROUND ACTIVITY SETTINGS SHORTCUT ----------------
-   Android exposes an intent (ACTION_APPLICATION_DETAILS_SETTINGS) that opens
-   a specific app's "App info" page — this is as close as the platform lets
-   any app (native or TWA) jump toward battery/background settings; there is
-   no intent that goes deeper (e.g. straight to "Allow background activity"),
-   so the user still taps "Battery" from that screen themselves. This only
-   works because the app is packaged as a TWA with a real Android package
-   name — a plain website has no package to target and can't do this at all.
-------------------------------------------------- */
-const ANDROID_TWA_PACKAGE_NAME = 'eu.nullvault.gym.twa';
+document.getElementById('btnNotificationsExplainerCancel').addEventListener('click', ()=>{
+  closeSheet('sheetNotificationsExplainer');
+});
 
-function isLikelyAndroidTWA(){
-  const isAndroid = /Android/i.test(navigator.userAgent);
-  if(!isAndroid) return false;
-  // The reliable, TWA-specific signal: when a Trusted Web Activity launches
-  // its page, Chrome sets document.referrer to "android-app://<package>".
-  // display-mode:standalone/fullscreen was tried here first but is NOT
-  // reliable inside a real TWA — multiple confirmed reports of it evaluating
-  // false even when genuinely running inside one — so it's kept only as a
-  // secondary fallback for a plain "installed PWA" (not packaged as a TWA).
-  const isTwaReferrer = document.referrer.startsWith('android-app://');
-  const isStandaloneFallback = window.matchMedia('(display-mode: standalone)').matches || window.matchMedia('(display-mode: fullscreen)').matches;
-  return isTwaReferrer || isStandaloneFallback;
-}
-
-const batteryRow = document.getElementById('btnBatterySettingsRow');
-if(batteryRow){
-  const isAndroid = /Android/i.test(navigator.userAgent);
-  const detected = isLikelyAndroidTWA();
-  const debugEl = document.getElementById('twaDetectionDebug');
-  if(isAndroid && debugEl){
-    // Visible diagnostic (Android only) so this can be checked directly on
-    // a phone without needing remote devtools — shows exactly why the
-    // shortcut above is or isn't appearing.
-    debugEl.style.display = 'block';
-    debugEl.textContent = `Debug — referrer: "${document.referrer||'(empty)'}" · standalone: ${window.matchMedia('(display-mode: standalone)').matches} · fullscreen: ${window.matchMedia('(display-mode: fullscreen)').matches} · detected as TWA: ${detected}`;
-  }
-  if(!detected){
-    // hide entirely for non-Android or non-installed contexts, since the
-    // intent below simply won't do anything there
-    batteryRow.style.display = 'none';
-  } else {
-    batteryRow.addEventListener('click', ()=>{
-      if(ANDROID_TWA_PACKAGE_NAME.startsWith('PASTE_')){
-        toast('Set your TWA package name in app.js to enable this');
-        return;
-      }
-      // Chrome's intent:// syntax for reconstructing a native "package:<name>"
-      // data URI is a genuinely under-documented corner of the format — this
-      // has NOT been verified on a real device. If it doesn't work, the
-      // fallback below (open the Play Store's app page, which reliably has
-      // an "App info"-adjacent path) is used instead.
-      const intentUrl = `intent://details#Intent;scheme=package;package=${ANDROID_TWA_PACKAGE_NAME};action=android.settings.APPLICATION_DETAILS_SETTINGS;S.browser_fallback_url=${encodeURIComponent('https://play.google.com/store/apps/details?id='+ANDROID_TWA_PACKAGE_NAME)};end`;
-      window.location.href = intentUrl;
-    });
-  }
-}
+document.getElementById('btnNotificationsExplainerContinue').addEventListener('click', async ()=>{
+  closeSheet('sheetNotificationsExplainer');
+  const granted = await requestNotificationPermission();
+  state.settings.notificationsEnabled = granted;
+  if(granted) toast('Rest timer notifications on');
+  saveState();
+  refreshNotificationsToggleUI();
+});
 
 function updateLastBackupLabel(){
   const el = document.getElementById('lastBackupLabel');
