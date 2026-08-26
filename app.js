@@ -9,7 +9,7 @@
 // stale/cached build can be identified at a glance instead of guessing —
 // if what you see on-device doesn't match what should have shipped, this
 // number tells you whether you're actually running the latest code.
-const APP_VERSION = 'v1.2.2';
+const APP_VERSION = 'v1.4.0';
 
 const STORAGE_KEY = 'gymtracker_data_v1';
 const LB_PER_KG = 2.20462;
@@ -433,14 +433,15 @@ function startWorkoutFromTemplate(templateId){
     activeWorkout = {startedAt: Date.now(), date: todayISO(), exercises:[], restDuration: 90};
     startWorkoutTimer();
   }
-  template.exIds.forEach(exId=>{
+  template.exIds.forEach((exId,idx)=>{
     const def = findExercise(exId);
     if(!def) return; // exercise may have been removed since template was saved
     activeWorkout.exercises.push({
       exId: def.id,
       name: def.name,
       sets: [{weight:'', reps:'', difficulty:'medium', done:false}],
-      notes:''
+      notes:'',
+      supersetGroup: (template.supersetGroups && template.supersetGroups[idx]) || null
     });
   });
   toast(`Loaded "${template.name}"`);
@@ -499,6 +500,13 @@ function openTemplateEditor(templateId){
   const template = templateId ? state.templates.find(t=>t.id===templateId) : null;
   // working copy of exercise ids so cancelling (closing without saving) doesn't mutate state
   editingTemplateExIds = template ? [...template.exIds] : [];
+  // parallel array, same length/index as editingTemplateExIds: null = not
+  // grouped, otherwise a shared group id string linking a superset together.
+  // Kept as its own array (rather than merging into exId objects) so the
+  // existing reorder/add/remove code above never needs to change.
+  editingTemplateSupersetGroups = template && template.supersetGroups
+    ? [...template.supersetGroups]
+    : editingTemplateExIds.map(()=>null);
   editingTemplateScheduledDays = template && template.scheduledDays ? [...template.scheduledDays] : [];
   refreshTemplateEditorSheet(template ? template.name : '');
   renderDayPicker();
@@ -533,6 +541,7 @@ function refreshTemplateEditorSheet(nameValue){
 }
 
 let editingTemplateExIds = [];
+let editingTemplateSupersetGroups = [];
 let editingTemplateScheduledDays = [];
 
 function renderTemplateEditorExerciseList(){
@@ -545,14 +554,21 @@ function renderTemplateEditorExerciseList(){
     const def = findExercise(exId);
     if(!def) return '';
     const isFirst = idx===0, isLast = idx===editingTemplateExIds.length-1;
-    return `<div class="reorder-item" data-reorder-idx="${idx}">
+    const groupId = editingTemplateSupersetGroups[idx];
+    const isGrouped = !!groupId;
+    // "linked with next" means this row and the very next row share a group —
+    // only meaningful to show/offer between adjacent rows, which keeps the
+    // interaction unambiguous (no arbitrary any-to-any picker needed)
+    const linkedWithNext = !isLast && groupId && groupId===editingTemplateSupersetGroups[idx+1];
+
+    const row = `<div class="reorder-item ${isGrouped?'superset-grouped':''}" data-reorder-idx="${idx}">
       <div class="reorder-handle" data-drag-handle="${idx}" aria-label="Drag to reorder">
         <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg>
       </div>
       <div class="ex-icon">${def.icon}</div>
       <div class="ex-info">
         <div class="ex-name">${def.name}</div>
-        <div class="ex-meta">${capitalize(def.muscle)}</div>
+        <div class="ex-meta">${capitalize(def.muscle)}${isGrouped?' · Superset':''}</div>
       </div>
       <div class="reorder-nudge-group">
         <button class="reorder-nudge-btn" data-nudge="${idx}:up" ${isFirst?'disabled':''} aria-label="Move up">
@@ -566,12 +582,24 @@ function renderTemplateEditorExerciseList(){
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6h14z"/></svg>
       </button>
     </div>`;
+
+    // connector between this row and the next, offering to link/unlink them
+    // as a superset — omitted after the last row since there's no "next"
+    const connector = !isLast ? `
+      <button class="superset-link-btn ${linkedWithNext?'linked':''}" data-superset-link="${idx}">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 12h6M13 6l6 6-6 6M11 18l-6-6 6-6"/></svg>
+        ${linkedWithNext ? 'Superset — tap to unlink' : 'Link as superset'}
+      </button>
+    ` : '';
+
+    return row + connector;
   }).join('');
 
   list.querySelectorAll('[data-remove-template-ex]').forEach(btn=>{
     btn.addEventListener('click', (e)=>{
       const idx = +e.currentTarget.dataset.removeTemplateEx;
       editingTemplateExIds.splice(idx,1);
+      editingTemplateSupersetGroups.splice(idx,1);
       renderTemplateEditorExerciseList();
     });
   });
@@ -583,11 +611,38 @@ function renderTemplateEditorExerciseList(){
       if(targetIdx<0 || targetIdx>=editingTemplateExIds.length) return;
       const [moved] = editingTemplateExIds.splice(idx,1);
       editingTemplateExIds.splice(targetIdx,0,moved);
+      const [movedGroup] = editingTemplateSupersetGroups.splice(idx,1);
+      editingTemplateSupersetGroups.splice(targetIdx,0,movedGroup);
       renderTemplateEditorExerciseList();
     });
   });
   list.querySelectorAll('[data-drag-handle]').forEach(handle=>{
     handle.addEventListener('pointerdown', onReorderPointerDown);
+  });
+  list.querySelectorAll('[data-superset-link]').forEach(btn=>{
+    btn.addEventListener('click', (e)=>{
+      const idx = +e.currentTarget.dataset.supersetLink;
+      const nextIdx = idx+1;
+      const groupA = editingTemplateSupersetGroups[idx];
+      const groupB = editingTemplateSupersetGroups[nextIdx];
+
+      if(groupA && groupA===groupB){
+        // already linked to each other — unlink this pair
+        editingTemplateSupersetGroups[idx] = null;
+        editingTemplateSupersetGroups[nextIdx] = null;
+      } else if(groupA || groupB){
+        // one side is already part of a different pair — supersets are
+        // limited to pairs for now, so refuse rather than silently create
+        // a confusing 3-way group
+        toast('That exercise is already linked to another one');
+        return;
+      } else {
+        const newGroup = uid();
+        editingTemplateSupersetGroups[idx] = newGroup;
+        editingTemplateSupersetGroups[nextIdx] = newGroup;
+      }
+      renderTemplateEditorExerciseList();
+    });
   });
 }
 
@@ -678,6 +733,8 @@ function onReorderPointerUp(e){
   if(currentIdx !== startIdx){
     const [moved] = editingTemplateExIds.splice(startIdx, 1);
     editingTemplateExIds.splice(currentIdx, 0, moved);
+    const [movedGroup] = editingTemplateSupersetGroups.splice(startIdx, 1);
+    editingTemplateSupersetGroups.splice(currentIdx, 0, movedGroup);
   }
   renderTemplateEditorExerciseList(); // clean re-render clears all inline transforms/dragging state
 }
@@ -697,12 +754,18 @@ document.getElementById('btnSaveTemplateEdits').addEventListener('click', ()=>{
 
   if(editingTemplateId){
     const t = state.templates.find(x=>x.id===editingTemplateId);
-    if(t){ t.name = name; t.exIds = [...editingTemplateExIds]; t.scheduledDays = [...editingTemplateScheduledDays]; }
+    if(t){
+      t.name = name;
+      t.exIds = [...editingTemplateExIds];
+      t.supersetGroups = [...editingTemplateSupersetGroups];
+      t.scheduledDays = [...editingTemplateScheduledDays];
+    }
   } else {
     state.templates.push({
       id: uid(),
       name,
       exIds: [...editingTemplateExIds],
+      supersetGroups: [...editingTemplateSupersetGroups],
       scheduledDays: [...editingTemplateScheduledDays],
       createdAt: Date.now()
     });
@@ -876,7 +939,7 @@ function renderWorkoutView(){
   }
   empty.style.display='none';
 
-  wrap.innerHTML = activeWorkout.exercises.map((ex,exIdx)=>{
+  const cardHtmlByIdx = activeWorkout.exercises.map((ex,exIdx)=>{
     const isWalk = ex.sets.length===1 && ex.sets[0].isWalk;
 
     if(isWalk){
@@ -978,7 +1041,38 @@ function renderWorkoutView(){
       <button class="add-set-btn" data-add-set="${exIdx}">+ Add set</button>
       <textarea class="notes-input" rows="1" placeholder="Notes (optional)" data-notes-ex="${exIdx}">${ex.notes||''}</textarea>
     </div>`;
-  }).join('');
+  });
+
+  // Wrap adjacent superset-paired cards in a bracket container, without
+  // touching how each individual card above is built. Cards are grouped
+  // only when they're both consecutive in the list AND share a group id —
+  // matching exactly how the routine editor only allows linking adjacent
+  // exercises, so this should always hold, but the isLast/lookahead check
+  // keeps it correct even if data ever drifts (e.g. an old session).
+  const exerciseCardsHtml = [];
+  let i = 0;
+  while(i < activeWorkout.exercises.length){
+    const ex = activeWorkout.exercises[i];
+    const next = activeWorkout.exercises[i+1];
+    const isPairStart = ex.supersetGroup && next && next.supersetGroup===ex.supersetGroup;
+    if(isPairStart){
+      exerciseCardsHtml.push(`
+        <div class="superset-pair">
+          <div class="superset-pair-label">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 12h6M13 6l6 6-6 6M11 18l-6-6 6-6"/></svg>
+            Superset
+          </div>
+          ${cardHtmlByIdx[i]}
+          ${cardHtmlByIdx[i+1]}
+        </div>
+      `);
+      i += 2;
+    } else {
+      exerciseCardsHtml.push(cardHtmlByIdx[i]);
+      i += 1;
+    }
+  }
+  wrap.innerHTML = exerciseCardsHtml.join('');
 
   ensureFinishBar();
   attachWorkoutCardListeners();
@@ -1014,6 +1108,40 @@ let restTimer = {
   exerciseName: '',
   notifyIntervalId: null
 };
+
+// Decides whether completing a set should start the rest timer right now,
+// or wait — for a superset pair, rest should only begin once BOTH exercises
+// in the round have had a set completed, not after every individual set.
+function maybeStartRestAfterSet(exIdx){
+  const ex = activeWorkout.exercises[exIdx];
+  const groupId = ex.supersetGroup;
+
+  if(!groupId){
+    startRestTimer(activeWorkout.restDuration || 90, ex.name);
+    return;
+  }
+
+  // find the other exercise(s) sharing this group (pairs only, per the
+  // routine editor's linking rule, but this loop tolerates more if that
+  // ever changes)
+  const partners = activeWorkout.exercises.filter((e,i)=>i!==exIdx && e.supersetGroup===groupId);
+  if(partners.length===0){
+    // group id present but no partner found in this session (e.g. the
+    // paired exercise was removed mid-session) — behave as ungrouped
+    startRestTimer(activeWorkout.restDuration || 90, ex.name);
+    return;
+  }
+
+  const completedCount = ex.sets.filter(s=>s.done).length;
+  const partnersReady = partners.every(p=>p.sets.filter(s=>s.done).length >= completedCount);
+
+  if(partnersReady){
+    const names = [ex, ...partners].map(e=>e.name).join(' + ');
+    startRestTimer(activeWorkout.restDuration || 90, names);
+  }
+  // else: this exercise is ahead of its partner in the round — no rest yet,
+  // the expectation is to move straight to the partner's matching set
+}
 
 function startRestTimer(seconds, exerciseName){
   stopRestTimer(); // clear any existing one first
@@ -1288,11 +1416,11 @@ function attachWorkoutCardListeners(){
   document.querySelectorAll('[data-toggle-done]').forEach(btn=>{
     btn.addEventListener('click', (e)=>{
       const [exIdx,setIdx] = e.currentTarget.dataset.toggleDone.split(':').map(Number);
-      const set = activeWorkout.exercises[exIdx].sets[setIdx];
+      const ex = activeWorkout.exercises[exIdx];
+      const set = ex.sets[setIdx];
       set.done = !set.done;
       if(set.done){
-        const exerciseName = activeWorkout.exercises[exIdx].name;
-        startRestTimer(activeWorkout.restDuration || 90, exerciseName);
+        maybeStartRestAfterSet(exIdx);
       }
       renderWorkoutView();
     });
@@ -1493,13 +1621,18 @@ function finishWorkout(){
     type: 'strength'
   };
 
-  // merge with existing session on that date if present
-  const existingIdx = state.sessions.findIndex(s=>s.date===session.date && s.type==='strength');
+  // merge with any existing session on that date, regardless of its type —
+  // a day should only ever have one session record, whether it's strength,
+  // walk, or (now) both combined
+  const existingIdx = state.sessions.findIndex(s=>s.date===session.date);
   if(existingIdx>=0){
     const existing = state.sessions[existingIdx];
     existing.exercises = existing.exercises.concat(exercisesOut);
     existing.kcal += session.kcal;
     existing.durationMin += durationMin;
+    // once a session includes strength work, label it as such rather than
+    // leaving it tagged from whatever was logged first (e.g. an earlier walk)
+    existing.type = 'strength';
   } else {
     state.sessions.push(session);
   }
@@ -1695,6 +1828,7 @@ function addExerciseToTemplateDraft(exId){
     return;
   }
   editingTemplateExIds.push(exId);
+  editingTemplateSupersetGroups.push(null);
   toast(`Added ${def.name}`);
   pickerMode = 'session';
   showView('templates');
@@ -1720,7 +1854,8 @@ function addExerciseToWorkout(exId){
     exId: def.id,
     name: def.name,
     sets: [{weight:'', reps:'', difficulty:'medium', done:false}],
-    notes:''
+    notes:'',
+    supersetGroup: null
   });
   toast(`Added ${def.name}`);
   showView('workout');
@@ -1796,11 +1931,14 @@ document.getElementById('btnSaveWalk').addEventListener('click', ()=>{
     type: 'walk'
   };
 
-  const existingIdx = state.sessions.findIndex(s=>s.date===session.date && s.type==='walk');
+  const existingIdx = state.sessions.findIndex(s=>s.date===session.date);
   if(existingIdx>=0){
     state.sessions[existingIdx].exercises.push(session.exercises[0]);
     state.sessions[existingIdx].kcal += kcal;
     state.sessions[existingIdx].durationMin += dur;
+    // preserve 'strength' labeling if that session already has lifting in
+    // it; otherwise leave its existing type (e.g. stays 'walk' if it was
+    // walk-only before this addition)
   } else {
     state.sessions.push(session);
   }
