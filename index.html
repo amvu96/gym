@@ -585,15 +585,16 @@ main:has(#view-log.active){padding-bottom:0;}
 .reorder-nudge-btn svg{width:11px; height:11px;}
 
 .reorder-item.superset-grouped{border-left:3px solid var(--cyan); padding-left:9px;}
-.superset-link-btn{
-  display:flex; align-items:center; justify-content:center; gap:6px;
-  width:100%; padding:6px; margin:-3px 0 8px; border:none; background:none;
-  font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.03em;
-  color:var(--text-faint); opacity:0.7;
+.reorder-handle-spacer{width:28px; flex-shrink:0;} /* keeps the bottom card of a pair aligned with the top card, which has a real drag handle */
+.superset-chain-btn{
+  width:28px; height:28px; border-radius:8px; flex-shrink:0;
+  background:var(--panel-raised); border:1px solid var(--border);
+  color:var(--text-faint); display:flex; align-items:center; justify-content:center;
+  transition:color .15s, border-color .15s, background .15s;
 }
-.superset-link-btn svg{width:13px; height:13px; flex-shrink:0;}
-.superset-link-btn:active{opacity:1; color:var(--cyan);}
-.superset-link-btn.linked{color:var(--cyan); opacity:1;}
+.superset-chain-btn svg{width:14px; height:14px;}
+.superset-chain-btn:active{border-color:var(--cyan); color:var(--cyan);}
+.superset-chain-btn.linked{color:var(--cyan); border-color:var(--cyan); background:rgba(58,214,255,0.1);}
 
 /* In-progress exercise card during logging */
 .logging-exercise-card{
