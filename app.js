@@ -9,7 +9,7 @@
 // stale/cached build can be identified at a glance instead of guessing —
 // if what you see on-device doesn't match what should have shipped, this
 // number tells you whether you're actually running the latest code.
-const APP_VERSION = 'v1.4.0';
+const APP_VERSION = 'v1.5.0';
 
 const STORAGE_KEY = 'gymtracker_data_v1';
 const LB_PER_KG = 2.20462;
@@ -544,6 +544,44 @@ let editingTemplateExIds = [];
 let editingTemplateSupersetGroups = [];
 let editingTemplateScheduledDays = [];
 
+// Returns the contiguous [start,end] index range that must move together
+// as one block for the exercise at idx — a 2-element range if idx is part
+// of a superset pair (supersets are always exactly 2 adjacent exercises),
+// otherwise just [idx,idx].
+function getExerciseUnitRange(idx){
+  const groupId = editingTemplateSupersetGroups[idx];
+  if(!groupId) return [idx, idx];
+  if(idx>0 && editingTemplateSupersetGroups[idx-1]===groupId) return [idx-1, idx];
+  if(idx<editingTemplateSupersetGroups.length-1 && editingTemplateSupersetGroups[idx+1]===groupId) return [idx, idx+1];
+  return [idx, idx]; // group id set but no adjacent partner found — treat as solo
+}
+
+// Moves the exercise at idx up or down by one step, carrying its superset
+// partner along as a single unit if it has one, so a pair can never be torn
+// apart into non-adjacent positions by a reorder.
+function moveExerciseUnit(idx, dir){
+  const [unitStart, unitEnd] = getExerciseUnitRange(idx);
+  const unitSize = unitEnd - unitStart + 1;
+
+  if(dir==='up'){
+    if(unitStart===0) return; // already at the top
+    // the unit swaps places with whatever single item sits directly above it
+    const aboveIdx = unitStart-1;
+    const unitExIds = editingTemplateExIds.splice(unitStart, unitSize);
+    const unitGroups = editingTemplateSupersetGroups.splice(unitStart, unitSize);
+    editingTemplateExIds.splice(aboveIdx, 0, ...unitExIds);
+    editingTemplateSupersetGroups.splice(aboveIdx, 0, ...unitGroups);
+  } else {
+    if(unitEnd>=editingTemplateExIds.length-1) return; // already at the bottom
+    const unitExIds = editingTemplateExIds.splice(unitStart, unitSize);
+    const unitGroups = editingTemplateSupersetGroups.splice(unitStart, unitSize);
+    // after removing the unit, the single item that was directly below it
+    // has shifted into unitStart — reinsert the unit right after that item
+    editingTemplateExIds.splice(unitStart + 1, 0, ...unitExIds);
+    editingTemplateSupersetGroups.splice(unitStart + 1, 0, ...unitGroups);
+  }
+}
+
 function renderTemplateEditorExerciseList(){
   const list = document.getElementById('editTemplateExerciseList');
   if(editingTemplateExIds.length===0){
@@ -560,16 +598,31 @@ function renderTemplateEditorExerciseList(){
     // only meaningful to show/offer between adjacent rows, which keeps the
     // interaction unambiguous (no arbitrary any-to-any picker needed)
     const linkedWithNext = !isLast && groupId && groupId===editingTemplateSupersetGroups[idx+1];
+    // the "bottom" card of an existing pair: grouped, and the row above it
+    // shares the same group. It gets no chain button of its own — the pair
+    // is controlled from its top card only, so there's exactly one control
+    // per pair rather than a confusing duplicate on both cards.
+    const isBottomOfPair = isGrouped && idx>0 && editingTemplateSupersetGroups[idx-1]===groupId;
+    // show the chain button on: any ungrouped row with a next row to offer
+    // linking to, OR the top row of an existing pair (to offer unlinking)
+    const showChainBtn = !isLast && !isBottomOfPair;
 
-    const row = `<div class="reorder-item ${isGrouped?'superset-grouped':''}" data-reorder-idx="${idx}">
-      <div class="reorder-handle" data-drag-handle="${idx}" aria-label="Drag to reorder">
+    return `<div class="reorder-item ${isGrouped?'superset-grouped':''}" data-reorder-idx="${idx}">
+      ${isBottomOfPair
+        ? `<div class="reorder-handle reorder-handle-spacer" aria-hidden="true"></div>`
+        : `<div class="reorder-handle" data-drag-handle="${idx}" aria-label="Drag to reorder${isGrouped?' (moves the superset pair together)':''}">
         <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg>
-      </div>
+      </div>`}
       <div class="ex-icon">${def.icon}</div>
       <div class="ex-info">
         <div class="ex-name">${def.name}</div>
         <div class="ex-meta">${capitalize(def.muscle)}${isGrouped?' · Superset':''}</div>
       </div>
+      ${showChainBtn ? `
+        <button class="superset-chain-btn ${linkedWithNext?'linked':''}" data-superset-link="${idx}" aria-label="${linkedWithNext?'Unlink superset':'Link as superset with next exercise'}" title="${linkedWithNext?'Unlink superset':'Link as superset'}">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M8 7a4 4 0 0 1 4-4h1a4 4 0 0 1 0 8h-1M16 17a4 4 0 0 1-4 4h-1a4 4 0 0 1 0-8h1"/><line x1="9" y1="12" x2="15" y2="12"/></svg>
+        </button>
+      ` : ''}
       <div class="reorder-nudge-group">
         <button class="reorder-nudge-btn" data-nudge="${idx}:up" ${isFirst?'disabled':''} aria-label="Move up">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M18 15l-6-6-6 6"/></svg>
@@ -582,17 +635,6 @@ function renderTemplateEditorExerciseList(){
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6h14z"/></svg>
       </button>
     </div>`;
-
-    // connector between this row and the next, offering to link/unlink them
-    // as a superset — omitted after the last row since there's no "next"
-    const connector = !isLast ? `
-      <button class="superset-link-btn ${linkedWithNext?'linked':''}" data-superset-link="${idx}">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 12h6M13 6l6 6-6 6M11 18l-6-6 6-6"/></svg>
-        ${linkedWithNext ? 'Superset — tap to unlink' : 'Link as superset'}
-      </button>
-    ` : '';
-
-    return row + connector;
   }).join('');
 
   list.querySelectorAll('[data-remove-template-ex]').forEach(btn=>{
@@ -607,12 +649,7 @@ function renderTemplateEditorExerciseList(){
     btn.addEventListener('click', (e)=>{
       const [idxStr,dir] = e.currentTarget.dataset.nudge.split(':');
       const idx = +idxStr;
-      const targetIdx = dir==='up' ? idx-1 : idx+1;
-      if(targetIdx<0 || targetIdx>=editingTemplateExIds.length) return;
-      const [moved] = editingTemplateExIds.splice(idx,1);
-      editingTemplateExIds.splice(targetIdx,0,moved);
-      const [movedGroup] = editingTemplateSupersetGroups.splice(idx,1);
-      editingTemplateSupersetGroups.splice(targetIdx,0,movedGroup);
+      moveExerciseUnit(idx, dir);
       renderTemplateEditorExerciseList();
     });
   });
@@ -731,10 +768,21 @@ function onReorderPointerUp(e){
   reorderDrag = null;
 
   if(currentIdx !== startIdx){
-    const [moved] = editingTemplateExIds.splice(startIdx, 1);
-    editingTemplateExIds.splice(currentIdx, 0, moved);
-    const [movedGroup] = editingTemplateSupersetGroups.splice(startIdx, 1);
-    editingTemplateSupersetGroups.splice(currentIdx, 0, movedGroup);
+    // The drag handle only ever appears on a solo exercise or the TOP card
+    // of a superset pair (see showChainBtn/handle-hiding in the render
+    // function), so startIdx here is never the bottom half of a pair.
+    // Moving the unit (1 or 2 items) as a block keeps a superset from ever
+    // being torn apart into non-adjacent slots by a drag.
+    const [unitStart, unitEnd] = getExerciseUnitRange(startIdx);
+    const unitSize = unitEnd - unitStart + 1;
+    const unitExIds = editingTemplateExIds.splice(unitStart, unitSize);
+    const unitGroups = editingTemplateSupersetGroups.splice(unitStart, unitSize);
+    // currentIdx was computed against the pre-splice, single-item-tracking
+    // pixel math; clamp it into the post-splice array bounds before
+    // reinserting the (possibly 2-wide) unit there.
+    const insertAt = Math.max(0, Math.min(editingTemplateExIds.length, currentIdx));
+    editingTemplateExIds.splice(insertAt, 0, ...unitExIds);
+    editingTemplateSupersetGroups.splice(insertAt, 0, ...unitGroups);
   }
   renderTemplateEditorExerciseList(); // clean re-render clears all inline transforms/dragging state
 }
@@ -1043,39 +1091,44 @@ function renderWorkoutView(){
     </div>`;
   });
 
-  // Wrap adjacent superset-paired cards in a bracket container, without
-  // touching how each individual card above is built. Cards are grouped
-  // only when they're both consecutive in the list AND share a group id —
-  // matching exactly how the routine editor only allows linking adjacent
-  // exercises, so this should always hold, but the isLast/lookahead check
-  // keeps it correct even if data ever drifts (e.g. an old session).
-  const exerciseCardsHtml = [];
+  wrap.innerHTML = wrapSupersetPairs(activeWorkout.exercises, (ex,i)=>cardHtmlByIdx[i]);
+
+  ensureFinishBar();
+  attachWorkoutCardListeners();
+}
+
+// Shared by the live logging view and the session-detail view: renders each
+// exercise via the given card-builder, then wraps any two ADJACENT entries
+// that share a supersetGroup in a labeled bracket container. Cards are only
+// ever grouped when consecutive AND matching, mirroring how the routine
+// editor only allows linking neighboring exercises — so this should always
+// hold, but the lookahead check keeps it safe even if data ever drifts
+// (e.g. a superset partner was deleted, or an old/imported session).
+function wrapSupersetPairs(exercises, buildCardHtml){
+  const out = [];
   let i = 0;
-  while(i < activeWorkout.exercises.length){
-    const ex = activeWorkout.exercises[i];
-    const next = activeWorkout.exercises[i+1];
+  while(i < exercises.length){
+    const ex = exercises[i];
+    const next = exercises[i+1];
     const isPairStart = ex.supersetGroup && next && next.supersetGroup===ex.supersetGroup;
     if(isPairStart){
-      exerciseCardsHtml.push(`
+      out.push(`
         <div class="superset-pair">
           <div class="superset-pair-label">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 12h6M13 6l6 6-6 6M11 18l-6-6 6-6"/></svg>
             Superset
           </div>
-          ${cardHtmlByIdx[i]}
-          ${cardHtmlByIdx[i+1]}
+          ${buildCardHtml(ex, i)}
+          ${buildCardHtml(next, i+1)}
         </div>
       `);
       i += 2;
     } else {
-      exerciseCardsHtml.push(cardHtmlByIdx[i]);
+      out.push(buildCardHtml(ex, i));
       i += 1;
     }
   }
-  wrap.innerHTML = exerciseCardsHtml.join('');
-
-  ensureFinishBar();
-  attachWorkoutCardListeners();
+  return out.join('');
 }
 
 /* ---------------- REST DURATION PICKER ---------------- */
@@ -1586,7 +1639,8 @@ function finishWorkout(){
         exId: ex.exId,
         name: ex.name,
         sets: [{...w}],
-        notes: ex.notes||''
+        notes: ex.notes||'',
+        supersetGroup: ex.supersetGroup || null
       };
     }
 
@@ -1603,7 +1657,8 @@ function finishWorkout(){
         warmup: !!s.warmup,
         done: !!s.done
       })),
-      notes: ex.notes||''
+      notes: ex.notes||'',
+      supersetGroup: ex.supersetGroup || null
     };
   }).filter(ex=>ex.sets.length>0);
 
@@ -2914,7 +2969,7 @@ function showSessionDetail(session){
   `;
 
   const content = document.getElementById('exerciseDetailContent');
-  content.innerHTML = session.exercises.map(ex=>renderSessionExerciseCard(ex)).join('');
+  content.innerHTML = wrapSupersetPairs(session.exercises, ex=>renderSessionExerciseCard(ex));
 
   document.getElementById('exerciseDetailFooter').innerHTML = `
     <button class="btn btn-danger btn-block" id="btnDeleteSession" data-del="${session.id}">Delete this session</button>
