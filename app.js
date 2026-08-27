@@ -9,7 +9,7 @@
 // stale/cached build can be identified at a glance instead of guessing —
 // if what you see on-device doesn't match what should have shipped, this
 // number tells you whether you're actually running the latest code.
-const APP_VERSION = 'v1.11.0';
+const APP_VERSION = 'v1.11.1';
 
 const STORAGE_KEY = 'gymtracker_data_v1';
 const LB_PER_KG = 2.20462;
@@ -2199,12 +2199,15 @@ function renderCalendar(){
     cell.addEventListener('click', ()=>onCalendarDayTap(cell.dataset.date));
   });
 
-  // month summary
+  // month summary — a standalone walk log (steps/km, no exercises) counts
+  // toward the month's kcal total but not its session count, same principle
+  // already applied to the weekly stats and streak on Home.
   const monthSessions = state.sessions.filter(s=>{
     const sd = parseISO(s.date);
     return sd.getFullYear()===year && sd.getMonth()===month;
   });
-  document.getElementById('monthSessions').textContent = monthSessions.length;
+  const monthWorkoutSessions = monthSessions.filter(s=>!(s.type==='walk' && s.exercises.length===0));
+  document.getElementById('monthSessions').textContent = monthWorkoutSessions.length;
   document.getElementById('monthKcal').textContent = Math.round(monthSessions.reduce((a,s)=>a+sessionTotalKcal(s),0));
 
   const list = document.getElementById('calSessionsList');
@@ -2217,6 +2220,23 @@ function renderCalendar(){
     const sorted = [...monthSessions].sort((a,b)=>b.date.localeCompare(a.date));
     list.innerHTML = sorted.map(s=>{
       const d = parseISO(s.date);
+      const isGeneralWalk = s.type==='walk' && s.exercises.length===0;
+      if(isGeneralWalk){
+        const parts = [];
+        if(s.steps) parts.push(`${s.steps.toLocaleString()} steps`);
+        if(s.distanceKm) parts.push(`${s.distanceKm}km`);
+        return `<div class="session-item" data-session="${s.id}">
+          <div class="session-date-badge">
+            <div class="d num">${d.getDate()}</div>
+            <div class="m">${d.toLocaleDateString(undefined,{weekday:'short'})}</div>
+          </div>
+          <div class="session-info">
+            <div class="session-title">Walking</div>
+            <div class="session-meta">${parts.join(' · ')}</div>
+          </div>
+          <div class="session-kcal num">${Math.round(sessionTotalKcal(s))} kcal</div>
+        </div>`;
+      }
       return `<div class="session-item" data-session="${s.id}">
         <div class="session-date-badge">
           <div class="d num">${d.getDate()}</div>
@@ -3183,6 +3203,20 @@ function mergeState(incoming){
     const existingTemplateIds = new Set(state.templates.map(t=>t.id));
     incoming.templates.forEach(t=>{
       if(!existingTemplateIds.has(t.id)) state.templates.push(t);
+    });
+  }
+  if(incoming.bodyWeightLogs){
+    if(!state.bodyWeightLogs) state.bodyWeightLogs = [];
+    // one entry per date (same rule as logging a weigh-in normally) — an
+    // incoming log for a date that already exists here updates it rather
+    // than being silently dropped or creating a duplicate point on the chart
+    const existingByDate = new Map(state.bodyWeightLogs.map(l=>[l.date,l]));
+    incoming.bodyWeightLogs.forEach(l=>{
+      if(existingByDate.has(l.date)){
+        existingByDate.get(l.date).weightKg = l.weightKg;
+      } else {
+        state.bodyWeightLogs.push(l);
+      }
     });
   }
 }
