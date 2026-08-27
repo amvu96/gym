@@ -9,7 +9,7 @@
 // stale/cached build can be identified at a glance instead of guessing —
 // if what you see on-device doesn't match what should have shipped, this
 // number tells you whether you're actually running the latest code.
-const APP_VERSION = 'v1.11.1';
+const APP_VERSION = 'v1.13.0';
 
 const STORAGE_KEY = 'gymtracker_data_v1';
 const LB_PER_KG = 2.20462;
@@ -18,7 +18,8 @@ const LB_PER_KG = 2.20462;
 let state = loadState();
 let currentView = 'home';
 let activeWorkout = null; // {startedAt, exercises:[{exId, name, sets:[{weight,reps,done}], notes}]}
-let pickerMode = 'session'; // 'session' = adding to activeWorkout, 'template' = adding to editingTemplateExIds
+let pickerMode = 'session'; // 'session' = adding to activeWorkout, 'template' = adding to editingTemplateExIds, 'superset' = adding to activeWorkout AND linking with pendingSupersetSourceIdx
+let pendingSupersetSourceIdx = null; // set when the picker was opened via the per-exercise Link button
 let workoutTimerInterval = null;
 let calCursor = new Date(); // month being viewed in calendar
 let customExercises = [];
@@ -1021,6 +1022,7 @@ function formatElapsed(ms){
 
 document.getElementById('btnAddExercise').addEventListener('click', ()=>{
   pickerMode = 'session';
+  pendingSupersetSourceIdx = null;
   showView('log');
   renderExerciseLibrary();
 });
@@ -1057,7 +1059,7 @@ function renderWorkoutView(){
     };
   }
 
-  renderRestDurationChips();
+  renderSessionRestLabel();
 
   const wrap = document.getElementById('workoutExerciseCards');
   const empty = document.getElementById('workoutEmptyState');
@@ -1141,9 +1143,18 @@ function renderWorkoutView(){
     return `<div class="logging-exercise-card" data-ex-idx="${exIdx}">
       <div class="logging-exercise-header">
         <h3>${ex.name}</h3>
-        <button class="remove-ex-btn" data-remove-ex="${exIdx}">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6h14z"/></svg>
-        </button>
+        <div class="logging-exercise-header-actions">
+          <button class="ex-action-btn ${ex.supersetGroup?'linked':''}" data-superset-toggle="${exIdx}" title="${ex.supersetGroup?'Unlink superset':'Link as superset with next exercise'}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M8 7a4 4 0 0 1 4-4h1a4 4 0 0 1 0 8h-1M16 17a4 4 0 0 1-4 4h-1a4 4 0 0 1 0-8h1"/><line x1="9" y1="12" x2="15" y2="12"/></svg>
+          </button>
+          <button class="ex-action-btn ${ex.restDurationCustomized?'rest-customized':''}" data-rest-picker="exercise" data-ex-idx="${exIdx}" title="Rest for this exercise">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>
+            ${formatRestShort(ex.restDuration!=null ? ex.restDuration : (activeWorkout.restDuration||90))}
+          </button>
+          <button class="remove-ex-btn" data-remove-ex="${exIdx}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6h14z"/></svg>
+          </button>
+        </div>
       </div>
       ${isAssisted ? `<div class="pill" style="margin-bottom:10px; color:var(--cyan); border-color:#3ad6ff40; background:#3ad6ff14;">
         <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="margin-right:4px;"><path d="M12 5v14M5 12l7 7 7-7"/></svg>
@@ -1214,20 +1225,84 @@ function wrapSupersetPairs(exercises, buildCardHtml){
   return out.join('');
 }
 
-/* ---------------- REST DURATION PICKER ---------------- */
-function renderRestDurationChips(){
-  const current = activeWorkout.restDuration || 90;
-  document.querySelectorAll('#restDurationChips .rest-chip').forEach(chip=>{
-    chip.classList.toggle('active', +chip.dataset.rest===current);
-  });
+/* ---------------- REST DURATION PICKER ----------------
+   One shared popover (not always-visible chips) used for both the
+   session-wide default (top of the workout view) and each individual
+   exercise's override. restPickerTarget tracks which one is currently being
+   set: 'session', or the numeric index of an exercise in activeWorkout.
+------------------------------------------------- */
+let restPickerTarget = 'session';
+
+function formatRestShort(seconds){
+  // Only convert to a "Xm" label when it divides evenly — 90s becoming "2m"
+  // (Math.round(90/60) rounds the .5 up) would misrepresent a very common
+  // rest duration. Anything that isn't a clean multiple of 60 just stays in
+  // seconds, which is unambiguous either way.
+  return (seconds>=60 && seconds%60===0) ? `${seconds/60}m` : `${seconds}s`;
 }
 
-document.getElementById('restDurationChips').addEventListener('click', (e)=>{
-  const chip = e.target.closest('.rest-chip');
-  if(!chip || !activeWorkout) return;
-  activeWorkout.restDuration = +chip.dataset.rest;
+function renderSessionRestLabel(){
+  if(!activeWorkout) return;
+  const label = document.getElementById('sessionRestLabel');
+  if(label) label.textContent = formatRestShort(activeWorkout.restDuration || 90);
+}
+
+function openRestPicker(target){
+  restPickerTarget = target;
+  const isSession = target==='session';
+  document.getElementById('restPickerTitle').textContent = isSession
+    ? 'Rest between sets'
+    : `Rest for ${activeWorkout.exercises[target].name}`;
+
+  const current = isSession
+    ? (activeWorkout.restDuration || 90)
+    : (activeWorkout.exercises[target].restDuration!=null ? activeWorkout.exercises[target].restDuration : (activeWorkout.restDuration||90));
+
+  document.querySelectorAll('#restPickerOptions .rest-picker-option').forEach(btn=>{
+    btn.classList.toggle('active', +btn.dataset.restValue===current);
+  });
+
+  document.getElementById('restPickerModalBackdrop').classList.add('open');
+  document.getElementById('restPickerModal').classList.add('open');
+}
+
+function closeRestPicker(){
+  document.getElementById('restPickerModalBackdrop').classList.remove('open');
+  document.getElementById('restPickerModal').classList.remove('open');
+}
+
+document.getElementById('btnOpenRestPicker').addEventListener('click', ()=>openRestPicker('session'));
+document.getElementById('btnCloseRestPicker').addEventListener('click', closeRestPicker);
+document.getElementById('restPickerModalBackdrop').addEventListener('click', closeRestPicker);
+
+document.getElementById('restPickerOptions').addEventListener('click', (e)=>{
+  const btn = e.target.closest('[data-rest-value]');
+  if(!btn || !activeWorkout) return;
+  const seconds = +btn.dataset.restValue;
+
+  if(restPickerTarget==='session'){
+    activeWorkout.restDuration = seconds;
+    // Setting the session-wide default applies it to every exercise that
+    // hasn't been individually customized — an exercise the user already
+    // set its own rest for keeps that override rather than being silently
+    // overwritten, per how this is meant to work.
+    activeWorkout.exercises.forEach(ex=>{
+      if(!ex.restDurationCustomized){
+        ex.restDuration = null; // null = "follow the session default", not a frozen copy of it
+      }
+    });
+    renderSessionRestLabel();
+    toast(`All exercises rest set to ${formatRestShort(seconds)}`);
+  } else {
+    const ex = activeWorkout.exercises[restPickerTarget];
+    ex.restDuration = seconds;
+    ex.restDurationCustomized = true;
+    toast(`${ex.name} rest set to ${formatRestShort(seconds)}`);
+  }
+
   persistActiveWorkout();
-  renderRestDurationChips();
+  closeRestPicker();
+  renderWorkoutView();
 });
 
 /* ---------------- REST TIMER ----------------
@@ -1248,12 +1323,18 @@ let restTimer = {
 // Decides whether completing a set should start the rest timer right now,
 // or wait — for a superset pair, rest should only begin once BOTH exercises
 // in the round have had a set completed, not after every individual set.
+// The rest duration that actually applies to a given exercise: its own
+// override if the user has set one, otherwise the session-wide default.
+function effectiveRestDuration(ex){
+  return ex.restDuration!=null ? ex.restDuration : (activeWorkout.restDuration || 90);
+}
+
 function maybeStartRestAfterSet(exIdx){
   const ex = activeWorkout.exercises[exIdx];
   const groupId = ex.supersetGroup;
 
   if(!groupId){
-    startRestTimer(activeWorkout.restDuration || 90, ex.name);
+    startRestTimer(effectiveRestDuration(ex), ex.name);
     return;
   }
 
@@ -1264,7 +1345,7 @@ function maybeStartRestAfterSet(exIdx){
   if(partners.length===0){
     // group id present but no partner found in this session (e.g. the
     // paired exercise was removed mid-session) — behave as ungrouped
-    startRestTimer(activeWorkout.restDuration || 90, ex.name);
+    startRestTimer(effectiveRestDuration(ex), ex.name);
     return;
   }
 
@@ -1273,7 +1354,11 @@ function maybeStartRestAfterSet(exIdx){
 
   if(partnersReady){
     const names = [ex, ...partners].map(e=>e.name).join(' + ');
-    startRestTimer(activeWorkout.restDuration || 90, names);
+    // For a superset pair, rest starts after whichever exercise finishes the
+    // round last (this function only reaches here once that's true) — its
+    // own rest setting governs the break, since that's the exercise the
+    // lifter is standing at when the round completes.
+    startRestTimer(effectiveRestDuration(ex), names);
   }
   // else: this exercise is ahead of its partner in the round — no rest yet,
   // the expectation is to move straight to the partner's matching set
@@ -1573,6 +1658,15 @@ function attachWorkoutCardListeners(){
   document.querySelectorAll('[data-remove-ex]').forEach(btn=>{
     btn.addEventListener('click', (e)=>{
       const exIdx = +e.currentTarget.dataset.removeEx;
+      const removed = activeWorkout.exercises[exIdx];
+      // if the removed exercise was half of a superset pair, the remaining
+      // half has no partner left to pair with — clear its grouping rather
+      // than leaving it visually "linked" to nothing
+      if(removed.supersetGroup){
+        activeWorkout.exercises.forEach(ex=>{
+          if(ex!==removed && ex.supersetGroup===removed.supersetGroup) ex.supersetGroup = null;
+        });
+      }
       activeWorkout.exercises.splice(exIdx,1);
       renderWorkoutView();
     });
@@ -1581,6 +1675,35 @@ function attachWorkoutCardListeners(){
     ta.addEventListener('input',(e)=>{
       activeWorkout.exercises[+e.target.dataset.notesEx].notes = e.target.value;
       debouncedPersistActiveWorkout();
+    });
+  });
+  document.querySelectorAll('[data-rest-picker="exercise"]').forEach(btn=>{
+    btn.addEventListener('click', (e)=>{
+      openRestPicker(+e.currentTarget.dataset.exIdx);
+    });
+  });
+  document.querySelectorAll('[data-superset-toggle]').forEach(btn=>{
+    btn.addEventListener('click', (e)=>{
+      const exIdx = +e.currentTarget.dataset.supersetToggle;
+      const ex = activeWorkout.exercises[exIdx];
+
+      if(ex.supersetGroup){
+        // unlink: clear the group from this exercise and whichever partner(s) shared it
+        const groupId = ex.supersetGroup;
+        activeWorkout.exercises.forEach(e2=>{ if(e2.supersetGroup===groupId) e2.supersetGroup = null; });
+        persistActiveWorkout();
+        toast('Superset unlinked');
+        renderWorkoutView();
+        return;
+      }
+
+      // Linking mid-session needs the user to pick WHICH other exercise to
+      // pair with (unlike the routine editor, where "next in the list" is
+      // unambiguous) — open the picker in superset mode instead of guessing.
+      pendingSupersetSourceIdx = exIdx;
+      pickerMode = 'superset';
+      showView('log');
+      renderExerciseLibrary();
     });
   });
 }
@@ -1739,7 +1862,7 @@ function finishWorkout(){
     }
 
     const def = findExercise(ex.exId) || {met:4.5};
-    const kcal = estimateStrengthExerciseKcal(def, ex.sets, bodyWeightKg, (activeWorkout.restDuration||90));
+    const kcal = estimateStrengthExerciseKcal(def, ex.sets, bodyWeightKg, effectiveRestDuration(ex));
     totalKcal += kcal;
     return {
       exId: ex.exId,
@@ -1910,6 +2033,11 @@ function renderExerciseLibrary(){
   const barWrap = document.getElementById('activeSessionBarWrap');
   if(pickerMode==='template'){
     barWrap.innerHTML = `<div class="pill pill-accent mb-12">Building routine — tap an exercise to add it</div>`;
+  } else if(pickerMode==='superset'){
+    const sourceName = (pendingSupersetSourceIdx!=null && activeWorkout && activeWorkout.exercises[pendingSupersetSourceIdx])
+      ? activeWorkout.exercises[pendingSupersetSourceIdx].name
+      : 'your exercise';
+    barWrap.innerHTML = `<div class="pill pill-cyan mb-12">Adding a superset exercise — pairs with ${sourceName}</div>`;
   } else {
     barWrap.innerHTML = activeWorkout ? `<div class="pill pill-accent mb-12">Session active — adding to current workout</div>` : '';
   }
@@ -2001,14 +2129,39 @@ function addExerciseToWorkout(exId){
     activeWorkout = {startedAt: Date.now(), date: todayISO(), exercises:[], restDuration: 90};
     startWorkoutTimer();
   }
-  activeWorkout.exercises.unshift({
+
+  const newExercise = {
     exId: def.id,
     name: def.name,
     sets: [{weight:'', reps:'', difficulty:'medium', done:false}],
     notes:'',
     supersetGroup: null
-  });
-  toast(`Added ${def.name}`);
+  };
+
+  if(pickerMode==='superset' && pendingSupersetSourceIdx!=null && activeWorkout.exercises[pendingSupersetSourceIdx]){
+    const source = activeWorkout.exercises[pendingSupersetSourceIdx];
+    if(source.exId===exId){
+      toast('Pick a different exercise to pair with');
+      pickerMode = 'session';
+      pendingSupersetSourceIdx = null;
+      showView('workout');
+      return;
+    }
+    const groupId = source.supersetGroup || uid();
+    source.supersetGroup = groupId;
+    newExercise.supersetGroup = groupId;
+    // Superset pairs must be adjacent in the array for the bracket-grouping
+    // display (wrapSupersetPairs) to pick them up — insert the new exercise
+    // directly after its partner rather than unshifting to the front.
+    activeWorkout.exercises.splice(pendingSupersetSourceIdx+1, 0, newExercise);
+    toast(`Linked ${source.name} + ${def.name} as a superset`);
+    pickerMode = 'session';
+    pendingSupersetSourceIdx = null;
+  } else {
+    activeWorkout.exercises.unshift(newExercise);
+    toast(`Added ${def.name}`);
+  }
+
   showView('workout');
   renderWorkoutView();
 }
@@ -3657,5 +3810,28 @@ function waitForGymSyncThenInit(attempts){
 }
 
 init();
+
+// Exposes a small set of pure, side-effect-free functions for the automated
+// test suite (see /tests) to call directly — nothing here changes app
+// behavior; it's purely a read-only window onto functions that already
+// exist above, so tests exercise the real implementation instead of a copy
+// that could silently drift out of sync with it.
+if(typeof window !== 'undefined'){
+  window.__gymTrackerTestHooks = {
+    estimateSetKcal,
+    estimateStrengthExerciseKcal,
+    estimateInclineWalkKcal,
+    estimateGeneralWalkKcal,
+    stepsToKm,
+    estimate1RM,
+    startOfWeek,
+    startOfMonth,
+    parseISO,
+    fmtDateISO,
+    kgToDisplay,
+    displayToKgIfNeeded,
+    formatRestShort
+  };
+}
 
 })();
