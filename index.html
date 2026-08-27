@@ -1057,6 +1057,40 @@ body.workout-active{padding-bottom:calc(96px + env(safe-area-inset-bottom));}
 .muscles-modal-close svg{width:15px; height:15px;}
 .muscles-modal-close:active{background:var(--panel);}
 
+/* Confirmation dialog — replaces native confirm() for destructive actions,
+   same centered-modal-with-own-backdrop technique as the muscles/video
+   modals. No X button: a confirm dialog should force an explicit choice
+   between the two buttons, but tapping the backdrop is still treated as
+   "cancel" (the safe default), matching how a native dialog's Esc key works. */
+.confirm-modal-backdrop{
+  position:fixed; inset:0; background:rgba(0,0,0,0.75); z-index:97;
+  opacity:0; pointer-events:none; transition:opacity .18s;
+}
+.confirm-modal-backdrop.open{opacity:1; pointer-events:auto;}
+.confirm-modal{
+  position:fixed; left:50%; top:50%; z-index:98;
+  transform:translate(-50%, -50%) scale(0.94); opacity:0;
+  pointer-events:none; transition:opacity .18s, transform .18s;
+  width:calc(100% - 48px); max-width:360px;
+}
+.confirm-modal.open{opacity:1; pointer-events:auto; transform:translate(-50%, -50%) scale(1);}
+.confirm-modal-content{
+  background:var(--panel); border-radius:16px; border:1px solid var(--border);
+  box-shadow:0 20px 60px -12px rgba(0,0,0,0.7);
+  padding:22px 20px 20px;
+}
+.confirm-modal-icon{
+  width:44px; height:44px; border-radius:50%; margin-bottom:14px;
+  display:flex; align-items:center; justify-content:center;
+  background:var(--danger-dim); color:var(--danger); font-size:18px;
+}
+.confirm-modal-icon.neutral{background:var(--accent-dim); color:var(--accent);}
+.confirm-modal-title{font-size:15.5px; font-weight:700; color:var(--text); margin-bottom:6px;}
+.confirm-modal-message{font-size:13px; color:var(--text-muted); line-height:1.5; margin-bottom:20px; white-space:pre-line;}
+.confirm-modal-actions{display:flex; flex-direction:column; gap:8px;}
+.confirm-modal-actions.row{flex-direction:row;}
+.confirm-modal-actions.row .btn{flex:1;}
+
 .video-modal-backdrop{
   position:fixed; inset:0; background:rgba(0,0,0,0.8); z-index:95;
   opacity:0; pointer-events:none; transition:opacity .2s;
@@ -1573,6 +1607,18 @@ body.sheet-open{overflow:hidden;}
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
     </button>
     <div id="routineMusclesMap"></div>
+  </div>
+</div>
+
+<div class="confirm-modal-backdrop" id="confirmModalBackdrop"></div>
+<div class="confirm-modal" id="confirmModal">
+  <div class="confirm-modal-content">
+    <div class="confirm-modal-icon" id="confirmModalIcon">
+      <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6h14z"/></svg>
+    </div>
+    <div class="confirm-modal-title" id="confirmModalTitle">Delete this?</div>
+    <div class="confirm-modal-message" id="confirmModalMessage">This cannot be undone.</div>
+    <div class="confirm-modal-actions" id="confirmModalActions"></div>
   </div>
 </div>
 
