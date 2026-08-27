@@ -9,7 +9,7 @@
 // stale/cached build can be identified at a glance instead of guessing —
 // if what you see on-device doesn't match what should have shipped, this
 // number tells you whether you're actually running the latest code.
-const APP_VERSION = 'v1.13.0';
+const APP_VERSION = 'v1.14.0';
 
 const STORAGE_KEY = 'gymtracker_data_v1';
 const LB_PER_KG = 2.20462;
@@ -2828,10 +2828,70 @@ function renderBodyWeightCard(){
           ${chartDates.length ? `<span>${chartDates[0]}</span><span>${chartDates[chartDates.length-1]}</span>` : ''}
         </div>
       </div>` : ''}
-      <button class="btn btn-secondary btn-block" id="btnOpenWeightLog">+ Log weigh-in</button>
+      <div class="row" style="gap:8px;">
+        <button class="btn btn-secondary" style="flex:1;" id="btnViewAllWeightLogs">View all entries</button>
+        <button class="btn btn-secondary" style="flex:1;" id="btnOpenWeightLog">+ Log weigh-in</button>
+      </div>
     </div>
   `;
   document.getElementById('btnOpenWeightLog').addEventListener('click', openWeightLogSheet);
+  document.getElementById('btnViewAllWeightLogs').addEventListener('click', openWeightLogListModal);
+}
+
+function openWeightLogListModal(){
+  renderWeightLogList();
+  document.getElementById('weightLogListModalBackdrop').classList.add('open');
+  document.getElementById('weightLogListModal').classList.add('open');
+}
+
+function closeWeightLogListModal(){
+  document.getElementById('weightLogListModalBackdrop').classList.remove('open');
+  document.getElementById('weightLogListModal').classList.remove('open');
+}
+
+document.getElementById('btnCloseWeightLogListModal').addEventListener('click', closeWeightLogListModal);
+document.getElementById('weightLogListModalBackdrop').addEventListener('click', closeWeightLogListModal);
+
+function renderWeightLogList(){
+  const container = document.getElementById('weightLogListContent');
+  const logs = [...(state.bodyWeightLogs||[])].sort((a,b)=>b.date.localeCompare(a.date)); // newest first
+
+  if(logs.length===0){
+    container.innerHTML = `<p class="text-sm text-faint" style="padding:8px 2px;">No weigh-ins logged yet.</p>`;
+    closeWeightLogListModal();
+    return;
+  }
+
+  container.innerHTML = logs.map(l=>{
+    const d = parseISO(l.date);
+    return `<div class="weight-log-row">
+      <div class="weight-log-date">
+        <div class="d num">${d.getDate()}</div>
+        <div class="m">${d.toLocaleDateString(undefined,{month:'short', year:'2-digit'})}</div>
+      </div>
+      <div class="weight-log-value num">${kgToDisplay(l.weightKg)}${unitLabel()}</div>
+      <button class="weight-log-delete" data-delete-weight-log="${l.id}" aria-label="Delete this entry">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6h14z"/></svg>
+      </button>
+    </div>`;
+  }).join('');
+
+  container.querySelectorAll('[data-delete-weight-log]').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      const id = btn.dataset.deleteWeightLog;
+      const ok = await confirmDialog({
+        title: 'Delete this entry?',
+        message: 'This cannot be undone.',
+        confirmLabel: 'Delete entry'
+      });
+      if(!ok) return;
+      state.bodyWeightLogs = state.bodyWeightLogs.filter(l=>l.id!==id);
+      saveState();
+      renderWeightLogList(); // refresh the open list — closes itself if now empty
+      renderBodyWeightCard(); // refresh the summary card (current value, trend, chart) behind it
+      toast('Entry deleted');
+    });
+  });
 }
 
 function openWeightLogSheet(){
