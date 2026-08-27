@@ -1021,6 +1021,40 @@ body.workout-active{padding-bottom:calc(96px + env(safe-area-inset-bottom));}
 }
 
 /* Video tutorial modal — sits above sheets, centered, own backdrop */
+/* Routine "muscles worked" popup — same centered-modal-with-own-backdrop
+   pattern as the video modal below, sized for a content card instead of a
+   16:9 video frame. Reuses that exact approach specifically because it
+   avoids needing the swipe-to-dismiss system to know about a second,
+   independent backdrop — a plain X button is simpler and just as clear. */
+.muscles-modal-backdrop{
+  position:fixed; inset:0; background:rgba(0,0,0,0.8); z-index:95;
+  opacity:0; pointer-events:none; transition:opacity .2s;
+  backdrop-filter:blur(2px);
+}
+.muscles-modal-backdrop.open{opacity:1; pointer-events:auto;}
+.muscles-modal{
+  position:fixed; left:50%; top:50%; z-index:96;
+  transform:translate(-50%, -50%) scale(0.92); opacity:0;
+  pointer-events:none; transition:opacity .22s, transform .22s;
+  width:calc(100% - 32px); max-width:420px;
+}
+.muscles-modal.open{opacity:1; pointer-events:auto; transform:translate(-50%, -50%) scale(1);}
+.muscles-modal-content{
+  position:relative;
+  background:var(--panel); border-radius:16px; border:1px solid var(--border);
+  box-shadow:0 20px 60px -12px rgba(0,0,0,0.7);
+  padding:20px;
+  max-height:85vh; overflow-y:auto;
+}
+.muscles-modal-content .muscle-map-title{padding-right:36px;}
+.muscles-modal-close{
+  position:absolute; top:14px; right:14px; z-index:1; width:30px; height:30px; border-radius:50%;
+  background:var(--panel-raised); border:1px solid var(--border); color:var(--text);
+  display:flex; align-items:center; justify-content:center;
+}
+.muscles-modal-close svg{width:15px; height:15px;}
+.muscles-modal-close:active{background:var(--panel);}
+
 .video-modal-backdrop{
   position:fixed; inset:0; background:rgba(0,0,0,0.8); z-index:95;
   opacity:0; pointer-events:none; transition:opacity .2s;
@@ -1513,6 +1547,10 @@ body.sheet-open{overflow:hidden;}
     </div>
     <div class="text-sm text-faint mt-4">Pick the days you usually do this routine, and Home will suggest it</div>
   </div>
+  <button class="btn btn-secondary btn-block mb-16" id="btnViewRoutineMuscles">
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:6px; vertical-align:-2px;"><path d="M12 2a5 5 0 0 0-5 5c0 1.5.6 2.6 1.3 3.5L12 22l3.7-11.5c.7-.9 1.3-2 1.3-3.5a5 5 0 0 0-5-5z"/></svg>
+    View muscles worked
+  </button>
   <div class="section-label">Exercises</div>
   <div class="sheet-scroll-body">
     <div id="editTemplateExerciseList" class="mb-12"></div>
@@ -1523,6 +1561,16 @@ body.sheet-open{overflow:hidden;}
       Add exercise
     </button>
     <button class="btn btn-primary btn-block" id="btnSaveTemplateEdits">Save changes</button>
+  </div>
+</div>
+
+<div class="muscles-modal-backdrop" id="muscleMapModalBackdrop"></div>
+<div class="muscles-modal" id="muscleMapModal">
+  <div class="muscles-modal-content">
+    <button class="muscles-modal-close" id="btnCloseMuscleMapModal" aria-label="Close">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+    </button>
+    <div id="routineMusclesMap"></div>
   </div>
 </div>
 
