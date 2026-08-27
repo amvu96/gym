@@ -815,6 +815,12 @@ body.workout-active{padding-bottom:calc(96px + env(safe-area-inset-bottom));}
 }
 .progress-chart-title h3{font-size:13px; font-weight:700; color:var(--text);}
 .progress-chart-title .sub{font-size:10.5px; color:var(--text-faint); font-weight:600;}
+.muscle-range-toggle{
+  cursor:pointer; padding:4px 9px; border-radius:99px; background:var(--panel-raised);
+  border:1px solid var(--border-soft); text-transform:uppercase; letter-spacing:.02em;
+  transition:color .15s, border-color .15s;
+}
+.muscle-range-toggle:active{color:var(--accent); border-color:var(--accent-dim);}
 
 .volume-bar-chart{display:flex; align-items:flex-end; gap:5px; height:90px; margin-bottom:8px;}
 .volume-bar-col{flex:1; display:flex; flex-direction:column; align-items:center; justify-content:flex-end; height:100%; gap:4px;}
@@ -1469,7 +1475,7 @@ body.sheet-open{overflow:hidden;}
 
 <div class="sheet" id="sheetQuickWalk">
   <div class="sheet-handle-hitarea"><div class="sheet-handle"></div></div>
-  <div class="sheet-title">Log incline walk</div>
+  <div class="sheet-title">Log incline treadmill walk</div>
   <div class="field">
     <label>Duration (minutes)</label>
     <input type="number" id="walkDuration" inputmode="numeric" placeholder="30">
@@ -1492,6 +1498,28 @@ body.sheet-open{overflow:hidden;}
     </div>
   </div>
   <button class="btn btn-primary btn-block" id="btnSaveWalk">Save to today's log</button>
+</div>
+
+<div class="sheet" id="sheetGeneralWalk">
+  <div class="sheet-handle-hitarea"><div class="sheet-handle"></div></div>
+  <div class="sheet-title">Log walk</div>
+  <div class="field">
+    <label>Steps</label>
+    <input type="number" id="genWalkSteps" inputmode="numeric" placeholder="e.g. 10000">
+  </div>
+  <div class="field">
+    <label>Distance (<span id="genWalkDistUnit">km</span>) — optional if you entered steps</label>
+    <input type="number" id="genWalkDistance" inputmode="decimal" step="0.1" placeholder="e.g. 7.5">
+  </div>
+  <div class="text-sm text-faint mb-12" id="genWalkDistanceHint"></div>
+  <div class="field">
+    <label>Estimated burn</label>
+    <div class="card" style="padding:12px; display:flex; align-items:baseline; gap:6px;">
+      <span class="num" style="font-size:22px; font-weight:700; color:var(--positive);" id="genWalkKcalPreview">0</span>
+      <span class="text-sm text-faint">kcal</span>
+    </div>
+  </div>
+  <button class="btn btn-primary btn-block" id="btnSaveGeneralWalk">Save walk</button>
 </div>
 
 <div class="sheet" id="sheetLogWeight">
