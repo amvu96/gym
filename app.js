@@ -9,7 +9,7 @@
 // stale/cached build can be identified at a glance instead of guessing —
 // if what you see on-device doesn't match what should have shipped, this
 // number tells you whether you're actually running the latest code.
-const APP_VERSION = 'v1.9.0';
+const APP_VERSION = 'v1.10.1';
 
 const STORAGE_KEY = 'gymtracker_data_v1';
 const LB_PER_KG = 2.20462;
@@ -395,11 +395,17 @@ function renderTemplatesQuickRow(){
   dotsWrap.innerHTML = sorted.map((_,i)=>`<div class="routine-carousel-dot ${i===0?'active':''}" data-dot="${i}"></div>`).join('');
 
   carousel.querySelectorAll('[data-delete-template]').forEach(btn=>{
-    btn.addEventListener('click', (e)=>{
+    btn.addEventListener('click', async (e)=>{
       e.stopPropagation();
       const id = e.currentTarget.dataset.deleteTemplate;
       const t = state.templates.find(x=>x.id===id);
-      if(t && confirm(`Delete routine "${t.name}"?`)){
+      if(!t) return;
+      const ok = await confirmDialog({
+        title: 'Delete routine?',
+        message: `"${t.name}" will be permanently deleted. This cannot be undone.`,
+        confirmLabel: 'Delete routine'
+      });
+      if(ok){
         state.templates = state.templates.filter(x=>x.id!==id);
         saveState();
         renderTemplatesQuickRow();
@@ -849,11 +855,16 @@ document.getElementById('btnSaveTemplateEdits').addEventListener('click', ()=>{
   renderTemplatesQuickRow();
 });
 
-document.getElementById('btnDeleteTemplateFromEditor').addEventListener('click', ()=>{
+document.getElementById('btnDeleteTemplateFromEditor').addEventListener('click', async ()=>{
   if(!editingTemplateId) return;
   const t = state.templates.find(x=>x.id===editingTemplateId);
   if(!t) return;
-  if(confirm(`Delete routine "${t.name}"? This cannot be undone.`)){
+  const ok = await confirmDialog({
+    title: 'Delete routine?',
+    message: `"${t.name}" will be permanently deleted. This cannot be undone.`,
+    confirmLabel: 'Delete routine'
+  });
+  if(ok){
     state.templates = state.templates.filter(x=>x.id!==editingTemplateId);
     saveState();
     closeSheet('sheetEditTemplate');
@@ -1561,10 +1572,16 @@ function getExerciseHistory(exId){
   const isAssisted = exDef && exDef.assisted;
   const sorted = [...state.sessions].sort((a,b)=>a.date.localeCompare(b.date));
   sorted.forEach(s=>{
-    const ex = s.exercises.find(e=>e.exId===exId);
-    if(ex && ex.sets && ex.sets.length){
+    // A session can legitimately log the same exercise more than once (e.g.
+    // repeated across superset rounds, or deliberately twice in a circuit).
+    // Using .find() here would silently drop every set after the first
+    // matching entry — flatMap all matches together so nothing is missed.
+    const matchingEntries = s.exercises.filter(e=>e.exId===exId);
+    if(matchingEntries.length===0) return;
+    const allSets = matchingEntries.flatMap(e=>e.sets||[]);
+    if(allSets.length){
       // warm-up sets don't count toward PRs, "best", or 1RM estimates
-      const workingSets = ex.sets.filter(st=>!st.warmup);
+      const workingSets = allSets.filter(st=>!st.warmup);
       // For assisted exercises, 0kg assistance is a real, meaningful value
       // (full bodyweight, no help) so it must not be filtered out. For normal
       // lifts, 0 means "not entered" and should be excluded.
@@ -1628,9 +1645,14 @@ function getLastPerformance(exId){
   return `${displayWeight}${unitLabel()}${assistLabel} × ${last.bestSetReps}`;
 }
 
-function cancelWorkout(){
+async function cancelWorkout(){
   if(activeWorkout.exercises.length>0){
-    if(!confirm('Discard this session? All logged sets will be lost.')) return;
+    const ok = await confirmDialog({
+      title: 'Discard this session?',
+      message: 'All logged sets will be lost. This cannot be undone.',
+      confirmLabel: 'Discard session'
+    });
+    if(!ok) return;
   }
   activeWorkout = null;
   persistActiveWorkout();
@@ -2970,7 +2992,7 @@ document.getElementById('fileImportInput').addEventListener('change', (e)=>{
   const file = e.target.files[0];
   if(!file) return;
   const reader = new FileReader();
-  reader.onload = (evt)=>{
+  reader.onload = async (evt)=>{
     try{
       const parsed = JSON.parse(evt.target.result);
       const incoming = parsed.data || parsed; // support raw state too
@@ -2978,10 +3000,17 @@ document.getElementById('fileImportInput').addEventListener('change', (e)=>{
         toast('Invalid backup file');
         return;
       }
-      const doMerge = confirm(
-        `This backup contains ${incoming.sessions.length} session(s).\n\nOK = Merge with current data\nCancel = Replace current data entirely`
-      );
-      if(doMerge){
+      const choice = await confirmDialog3Way({
+        title: 'Restore backup',
+        message: `This backup contains ${incoming.sessions.length} session${incoming.sessions.length!==1?'s':''}. Choose how to apply it to this device.`,
+        options: [
+          {label:'Merge with current data', value:'merge'},
+          {label:'Replace current data entirely', value:'replace', danger:true},
+          {label:'Cancel', value:null}
+        ]
+      });
+      if(choice===null) return;
+      if(choice==='merge'){
         mergeState(incoming);
       } else {
         state = Object.assign(defaultState(), incoming, {
@@ -3023,14 +3052,96 @@ function mergeState(incoming){
   }
 }
 
-document.getElementById('btnResetAll').addEventListener('click', ()=>{
-  if(!confirm('This will permanently erase all sessions and settings on this device. This cannot be undone. Continue?')) return;
-  if(!confirm('Are you absolutely sure? Consider exporting a backup first.')) return;
+document.getElementById('btnResetAll').addEventListener('click', async ()=>{
+  const ok = await confirmDialog({
+    title: 'Erase all data?',
+    message: 'This permanently deletes every session, routine, and setting on this device. Consider exporting a backup first — this cannot be undone.',
+    confirmLabel: 'Erase everything',
+    danger: true
+  });
+  if(!ok) return;
   state = defaultState();
   saveState();
   toast('All data erased');
   showView('home');
 });
+
+/* ---------------- CONFIRM DIALOG ----------------
+   Replaces native confirm() with a styled, in-app modal. Promise-based so
+   call sites read like `if(await confirmDialog({...})) { ... }`, the same
+   shape as the confirm() calls it replaces. Backdrop tap counts as cancel,
+   matching how a native dialog's Esc key behaves — there's no X button,
+   since a confirmation should resolve to an explicit choice between the
+   two buttons rather than offer a third silent-dismiss path.
+------------------------------------------------- */
+function confirmDialog({title, message, confirmLabel='Confirm', cancelLabel='Cancel', danger=true}={}){
+  return new Promise(resolve=>{
+    document.getElementById('confirmModalTitle').textContent = title || 'Are you sure?';
+    document.getElementById('confirmModalMessage').textContent = message || '';
+    document.getElementById('confirmModalIcon').classList.toggle('neutral', !danger);
+
+    const actions = document.getElementById('confirmModalActions');
+    actions.className = 'confirm-modal-actions';
+    actions.innerHTML = `
+      <button class="btn ${danger?'btn-danger':'btn-primary'} btn-block" id="btnConfirmModalYes">${confirmLabel}</button>
+      <button class="btn btn-secondary btn-block" id="btnConfirmModalNo">${cancelLabel}</button>
+    `;
+
+    const backdrop = document.getElementById('confirmModalBackdrop');
+    const modal = document.getElementById('confirmModal');
+
+    const finish = (result)=>{
+      backdrop.classList.remove('open');
+      modal.classList.remove('open');
+      backdrop.removeEventListener('click', onCancel);
+      resolve(result);
+    };
+    const onCancel = ()=>finish(false);
+
+    document.getElementById('btnConfirmModalYes').addEventListener('click', ()=>finish(true), {once:true});
+    document.getElementById('btnConfirmModalNo').addEventListener('click', onCancel, {once:true});
+    backdrop.addEventListener('click', onCancel);
+
+    backdrop.classList.add('open');
+    modal.classList.add('open');
+  });
+}
+
+// Three-way variant for the backup-restore flow (merge / replace / cancel)
+// — not a yes/no question, so it gets its own button layout rather than
+// forcing that choice through confirmDialog's two-button shape.
+function confirmDialog3Way({title, message, options}={}){
+  return new Promise(resolve=>{
+    document.getElementById('confirmModalTitle').textContent = title || '';
+    document.getElementById('confirmModalMessage').textContent = message || '';
+    document.getElementById('confirmModalIcon').classList.add('neutral');
+
+    const actions = document.getElementById('confirmModalActions');
+    actions.className = 'confirm-modal-actions';
+    actions.innerHTML = options.map((opt,i)=>
+      `<button class="btn ${opt.danger?'btn-danger':(i===0?'btn-primary':'btn-secondary')} btn-block" data-opt="${i}">${opt.label}</button>`
+    ).join('');
+
+    const backdrop = document.getElementById('confirmModalBackdrop');
+    const modal = document.getElementById('confirmModal');
+
+    const finish = (result)=>{
+      backdrop.classList.remove('open');
+      modal.classList.remove('open');
+      backdrop.removeEventListener('click', onCancel);
+      resolve(result);
+    };
+    const onCancel = ()=>finish(null);
+
+    actions.querySelectorAll('[data-opt]').forEach(btn=>{
+      btn.addEventListener('click', ()=>finish(options[+btn.dataset.opt].value), {once:true});
+    });
+    backdrop.addEventListener('click', onCancel);
+
+    backdrop.classList.add('open');
+    modal.classList.add('open');
+  });
+}
 
 /* ---------------- SHEETS ---------------- */
 function openSheet(id){
@@ -3232,8 +3343,13 @@ function showSessionDetail(session){
     });
   });
 
-  document.getElementById('btnDeleteSession').addEventListener('click', (e)=>{
-    if(confirm('Delete this session? This cannot be undone.')){
+  document.getElementById('btnDeleteSession').addEventListener('click', async (e)=>{
+    const ok = await confirmDialog({
+      title: 'Delete this session?',
+      message: 'This cannot be undone.',
+      confirmLabel: 'Delete session'
+    });
+    if(ok){
       state.sessions = state.sessions.filter(s=>s.id!==e.target.dataset.del);
       saveState();
       closeSheet('sheetExerciseDetail');
