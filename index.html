@@ -907,6 +907,24 @@ body.workout-active{padding-bottom:calc(96px + env(safe-area-inset-bottom));}
 .body-weight-change{font-size:14px; font-weight:700; text-align:right;}
 .body-weight-change-label{display:block; font-size:9px; color:var(--text-faint); font-weight:600; text-transform:uppercase; letter-spacing:.03em; margin-top:2px;}
 
+.weight-log-list{display:flex; flex-direction:column;}
+.weight-log-row{
+  display:flex; align-items:center; gap:12px; padding:11px 2px;
+  border-bottom:1px solid var(--border-soft);
+}
+.weight-log-row:last-child{border-bottom:none;}
+.weight-log-date{flex-shrink:0; width:64px;}
+.weight-log-date .d{font-size:13px; font-weight:700; color:var(--text);}
+.weight-log-date .m{font-size:9.5px; color:var(--text-faint); text-transform:uppercase; font-weight:600;}
+.weight-log-value{flex:1; font-size:15px; font-weight:700; color:var(--text);}
+.weight-log-delete{
+  flex-shrink:0; width:30px; height:30px; border-radius:8px;
+  background:var(--panel-raised); border:1px solid var(--border); color:var(--text-faint);
+  display:flex; align-items:center; justify-content:center;
+}
+.weight-log-delete svg{width:14px; height:14px;}
+.weight-log-delete:active{border-color:var(--danger); color:var(--danger); background:var(--danger-dim);}
+
 .ex-history-row{
   display:flex; align-items:center; gap:12px; padding:12px 2px;
   border-bottom:1px solid var(--border-soft);
@@ -1676,6 +1694,17 @@ body.sheet-open{overflow:hidden;}
       <button class="rest-picker-option" data-rest-value="120">2m</button>
       <button class="rest-picker-option" data-rest-value="180">3m</button>
     </div>
+  </div>
+</div>
+
+<div class="muscles-modal-backdrop" id="weightLogListModalBackdrop"></div>
+<div class="muscles-modal" id="weightLogListModal" style="max-width:360px;">
+  <div class="muscles-modal-content">
+    <button class="muscles-modal-close" id="btnCloseWeightLogListModal" aria-label="Close">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+    </button>
+    <div class="muscle-map-title" style="padding-right:36px;">All weigh-ins</div>
+    <div class="weight-log-list" id="weightLogListContent"></div>
   </div>
 </div>
 
