@@ -9,7 +9,7 @@
 // stale/cached build can be identified at a glance instead of guessing —
 // if what you see on-device doesn't match what should have shipped, this
 // number tells you whether you're actually running the latest code.
-const APP_VERSION = 'v1.10.1';
+const APP_VERSION = 'v1.11.0';
 
 const STORAGE_KEY = 'gymtracker_data_v1';
 const LB_PER_KG = 2.20462;
@@ -176,6 +176,20 @@ function estimateInclineWalkKcal(speedKmh, inclinePct, minutes, bodyWeightKg){
   return estimateSetKcal(met, bodyWeightKg, minutes*60);
 }
 
+// General/daily walking (steps and/or distance, no treadmill incline or
+// speed to go on). ~0.5 kcal per kg of bodyweight per km is a well-established
+// rule of thumb for moderate-pace walking, cross-checked against the ACSM
+// MET formula across several sources — it needs no pace/incline input,
+// which suits a simple steps/km entry instead of a treadmill console.
+const STEPS_PER_KM = 1300; // population-average stride (~0.77m); used only
+                            // when distance isn't entered directly
+function estimateGeneralWalkKcal(distanceKm, bodyWeightKg){
+  return 0.5 * bodyWeightKg * distanceKm;
+}
+function stepsToKm(steps){
+  return steps / STEPS_PER_KM;
+}
+
 function estimateCardioKcal(exercise, minutes, bodyWeightKg){
   return estimateSetKcal(exercise.met, bodyWeightKg, minutes*60);
 }
@@ -250,16 +264,20 @@ function renderHome(){
   const streak = computeStreak();
   document.getElementById('streakText').innerHTML = `<b>${streak}</b> day streak`;
 
-  // week stats — calendar week (Mon-Sun), matching the M T W T F S S strip below
+  // week stats — calendar week (Mon-Sun), matching the M T W T F S S strip below.
+  // A standalone walk log (steps/km, no exercises) contributes to kcal/wk but
+  // is not itself a "session" for the sessions-per-week count or goal ring —
+  // it's daily activity, not a workout you completed.
   const weekSessions = sessionsThisCalendarWeek();
+  const weekWorkoutSessions = weekSessions.filter(s=>!(s.type==='walk' && s.exercises.length===0));
   const weekKcal = Math.round(weekSessions.reduce((a,s)=>a+sessionTotalKcal(s),0));
-  document.getElementById('statWeekSessions').textContent = weekSessions.length;
+  document.getElementById('statWeekSessions').textContent = weekWorkoutSessions.length;
   document.getElementById('statWeekKcal').textContent = weekKcal;
   document.getElementById('statTotalSessions').textContent = state.sessions.length;
 
   // week ring
   const goal = state.settings.weeklyGoal || 4;
-  const pct = Math.min(1, weekSessions.length/goal);
+  const pct = Math.min(1, weekWorkoutSessions.length/goal);
   const circumference = 201;
   document.getElementById('weekRingFg').style.strokeDashoffset = circumference*(1-pct);
   document.getElementById('weekRingPct').textContent = Math.round(pct*100)+'%';
@@ -882,6 +900,13 @@ function startOfWeek(d){
   return date;
 }
 
+function startOfMonth(d){
+  const date = new Date(d);
+  date.setDate(1);
+  date.setHours(0,0,0,0);
+  return date;
+}
+
 function sessionsThisCalendarWeek(){
   const weekStart = startOfWeek(new Date());
   return state.sessions.filter(s=>parseISO(s.date) >= weekStart);
@@ -893,8 +918,12 @@ function sessionsInLastNDays(n){
 }
 
 function computeStreak(){
-  if(state.sessions.length===0) return 0;
-  const dates = new Set(state.sessions.map(s=>s.date));
+  // Standalone walk logs (steps/km, no exercises) shouldn't count toward or
+  // extend a training streak — same reasoning as excluding them from
+  // sessions/wk: this tracks gym consistency, not general daily activity.
+  const workoutSessions = state.sessions.filter(s=>!(s.type==='walk' && s.exercises.length===0));
+  if(workoutSessions.length===0) return 0;
+  const dates = new Set(workoutSessions.map(s=>s.date));
   let streak = 0;
   let cursor = new Date(); cursor.setHours(0,0,0,0);
   // if no session today, check if yesterday continues streak (grace)
@@ -920,6 +949,25 @@ function renderRecentSessions(){
   }
   list.innerHTML = sorted.map(s=>{
     const d = parseISO(s.date);
+    const isGeneralWalk = s.type==='walk' && s.exercises.length===0;
+
+    if(isGeneralWalk){
+      const parts = [];
+      if(s.steps) parts.push(`${s.steps.toLocaleString()} steps`);
+      if(s.distanceKm) parts.push(`${s.distanceKm}km`);
+      return `<div class="session-item" data-session="${s.id}">
+        <div class="session-date-badge">
+          <div class="d num">${d.getDate()}</div>
+          <div class="m">${d.toLocaleDateString(undefined,{month:'short'})}</div>
+        </div>
+        <div class="session-info">
+          <div class="session-title">Walking</div>
+          <div class="session-meta">${parts.join(' · ')}</div>
+        </div>
+        <div class="session-kcal num">${Math.round(sessionTotalKcal(s))} kcal</div>
+      </div>`;
+    }
+
     const exNames = s.exercises.slice(0,3).map(e=>e.name).join(', ');
     const more = s.exercises.length>3 ? ` +${s.exercises.length-3}` : '';
     return `<div class="session-item" data-session="${s.id}">
@@ -1946,7 +1994,7 @@ function addExerciseToWorkout(exId){
   const def = findExercise(exId);
   if(!def) return;
   if(def.special==='incline_walk'){
-    openWalkSheet('session');
+    openWalkSheet();
     return;
   }
   if(!activeWorkout){
@@ -1968,18 +2016,11 @@ function addExerciseToWorkout(exId){
 document.getElementById('exerciseSearchInput').addEventListener('input', renderExerciseLibrary);
 
 /* ---------------- QUICK WALK LOGGING ---------------- */
-let walkSheetMode = 'standalone'; // 'standalone' saves directly; 'session' adds to activeWorkout
 
-document.getElementById('btnQuickWalk').addEventListener('click', ()=>{
-  openWalkSheet('standalone');
-});
-
-function openWalkSheet(mode){
-  walkSheetMode = mode;
+function openWalkSheet(){
   document.getElementById('walkDuration').value = 30;
   document.getElementById('walkSpeed').value = 5.5;
   document.getElementById('walkIncline').value = 8;
-  document.getElementById('btnSaveWalk').textContent = mode==='session' ? 'Add to session' : "Save to today's log";
   updateWalkPreview();
   openSheet('sheetQuickWalk');
 }
@@ -1997,6 +2038,10 @@ function updateWalkPreview(){
   document.getElementById('walkKcalPreview').textContent = Math.round(kcal);
 }
 
+// This sheet is only ever reached from inside an active session now (adding
+// "Incline Treadmill Walk" as an exercise mid-workout) — the standalone
+// Home-screen "Log walk" button opens sheetGeneralWalk instead, a separate,
+// simpler steps/km flow with its own save handler below.
 document.getElementById('btnSaveWalk').addEventListener('click', ()=>{
   const dur = parseFloat(document.getElementById('walkDuration').value)||0;
   const speed = parseFloat(document.getElementById('walkSpeed').value)||0;
@@ -2012,41 +2057,103 @@ document.getElementById('btnSaveWalk').addEventListener('click', ()=>{
     notes: ''
   };
 
-  if(walkSheetMode==='session'){
-    if(!activeWorkout){
-      activeWorkout = {startedAt: Date.now(), date: todayISO(), exercises:[], restDuration: 90};
-      startWorkoutTimer();
-    }
-    activeWorkout.exercises.unshift(walkExercise);
-    closeSheet('sheetQuickWalk');
-    toast(`Added · ${kcal} kcal`);
-    showView('workout');
-    renderWorkoutView();
+  if(!activeWorkout){
+    activeWorkout = {startedAt: Date.now(), date: todayISO(), exercises:[], restDuration: 90};
+    startWorkoutTimer();
+  }
+  activeWorkout.exercises.unshift(walkExercise);
+  closeSheet('sheetQuickWalk');
+  toast(`Added · ${kcal} kcal`);
+  showView('workout');
+  renderWorkoutView();
+});
+
+/* ---------------- STANDALONE WALK LOG (steps/km) ----------------
+   The Home screen's "Log walk" button. A distinct, simpler flow from the
+   incline-treadmill exercise above — no speed/incline to enter, just steps
+   and/or distance, since this represents an ordinary daily walk rather than
+   a specific treadmill workout. Saved as its own type:'walk' session that
+   counts toward weekly kcal but NOT toward "sessions/wk" (see
+   sessionsThisCalendarWeek, which filters these out on purpose).
+------------------------------------------------- */
+function openGeneralWalkSheet(){
+  document.getElementById('genWalkSteps').value = '';
+  document.getElementById('genWalkDistance').value = '';
+  document.getElementById('genWalkDistUnit').textContent = state.settings.useLbs ? 'mi' : 'km'; // reuses the imperial/metric setting as a stand-in for unit preference
+  updateGeneralWalkPreview();
+  openSheet('sheetGeneralWalk');
+}
+
+document.getElementById('btnQuickWalk').addEventListener('click', openGeneralWalkSheet);
+
+// Distance in miles isn't something the rest of the app models (weights use
+// lbs/kg, not a separate distance-unit setting) — keep the walk math itself
+// always in km internally, and only relabel the field for lb-unit users
+// rather than building a whole second unit system for this one screen.
+function generalWalkDistanceKm(){
+  const stepsVal = parseFloat(document.getElementById('genWalkSteps').value);
+  const distVal = parseFloat(document.getElementById('genWalkDistance').value);
+  if(!isNaN(distVal) && distVal>0) return distVal;
+  if(!isNaN(stepsVal) && stepsVal>0) return stepsToKm(stepsVal);
+  return 0;
+}
+
+function updateGeneralWalkPreview(){
+  const km = generalWalkDistanceKm();
+  const bw = state.settings.bodyWeightKg || 75;
+  const kcal = estimateGeneralWalkKcal(km, bw);
+  document.getElementById('genWalkKcalPreview').textContent = Math.round(kcal);
+
+  const stepsVal = parseFloat(document.getElementById('genWalkSteps').value);
+  const distVal = parseFloat(document.getElementById('genWalkDistance').value);
+  const hint = document.getElementById('genWalkDistanceHint');
+  if(!isNaN(stepsVal) && stepsVal>0 && isNaN(distVal)){
+    hint.textContent = `≈ ${km.toFixed(1)} km based on steps`;
+  } else {
+    hint.textContent = '';
+  }
+}
+
+['genWalkSteps','genWalkDistance'].forEach(id=>{
+  document.getElementById(id).addEventListener('input', updateGeneralWalkPreview);
+});
+
+document.getElementById('btnSaveGeneralWalk').addEventListener('click', ()=>{
+  const stepsVal = parseFloat(document.getElementById('genWalkSteps').value);
+  const km = generalWalkDistanceKm();
+  if(km<=0){
+    toast('Enter steps or a distance');
     return;
   }
+  const bw = state.settings.bodyWeightKg || 75;
+  const kcal = Math.round(estimateGeneralWalkKcal(km, bw));
+  const steps = !isNaN(stepsVal) && stepsVal>0 ? Math.round(stepsVal) : null;
 
   const session = {
     id: uid(),
     date: todayISO(),
-    exercises: [walkExercise],
-    durationMin: dur,
+    exercises: [],
+    durationMin: 0,
     kcal,
-    type: 'walk'
+    type: 'walk',
+    steps,
+    distanceKm: Math.round(km*10)/10
   };
 
-  const existingIdx = state.sessions.findIndex(s=>s.date===session.date);
+  // A day can have at most one standalone walk log — logging again the same
+  // day adds to the existing entry (matching how a second gym session that
+  // day merges into one record) rather than creating a second walk card.
+  const existingIdx = state.sessions.findIndex(s=>s.date===session.date && s.type==='walk' && s.exercises.length===0);
   if(existingIdx>=0){
-    state.sessions[existingIdx].exercises.push(session.exercises[0]);
-    state.sessions[existingIdx].kcal += kcal;
-    state.sessions[existingIdx].durationMin += dur;
-    // preserve 'strength' labeling if that session already has lifting in
-    // it; otherwise leave its existing type (e.g. stays 'walk' if it was
-    // walk-only before this addition)
+    const existing = state.sessions[existingIdx];
+    existing.steps = (existing.steps||0) + (steps||0);
+    existing.distanceKm = Math.round((existing.distanceKm + km)*10)/10;
+    existing.kcal += kcal;
   } else {
     state.sessions.push(session);
   }
   saveState();
-  closeSheet('sheetQuickWalk');
+  closeSheet('sheetGeneralWalk');
   toast(`Saved · ${kcal} kcal`);
   renderHome();
 });
@@ -2429,10 +2536,18 @@ function mountMuscleMap(canvasId, highlights){
   });
 }
 
+let muscleBreakdownRange = 'all'; // 'all' -> 'monthly' -> 'weekly' -> 'all'
+
 function renderMuscleBreakdown(){
   const container = document.getElementById('progressMuscleBreakdown');
+  const now = new Date();
+  const rangeStart = muscleBreakdownRange==='weekly' ? startOfWeek(now)
+    : muscleBreakdownRange==='monthly' ? startOfMonth(now)
+    : null; // 'all' has no lower bound
+
   const counts = {};
   state.sessions.forEach(s=>{
+    if(rangeStart && parseISO(s.date) < rangeStart) return;
     s.exercises.forEach(ex=>{
       if(!ex.sets || !ex.sets.length || ex.sets[0].isWalk) return;
       const workingSets = ex.sets.filter(st=>!st.warmup && (st.weight||st.reps||st.done));
@@ -2444,8 +2559,22 @@ function renderMuscleBreakdown(){
   });
 
   const entries = Object.entries(counts).sort((a,b)=>b[1]-a[1]).slice(0,6);
+  const rangeLabel = {all:'all time', monthly:'this month', weekly:'this week'}[muscleBreakdownRange];
+
   if(entries.length===0){
-    container.innerHTML = '';
+    // Still show the header (with a working toggle) even when the selected
+    // range has no data, rather than hiding the whole card — otherwise
+    // switching to "this week" on a rest day looks like the feature broke.
+    container.innerHTML = `
+      <div class="progress-chart-card">
+        <div class="progress-chart-title">
+          <h3>Sets by muscle group</h3>
+          <span class="sub muscle-range-toggle" id="muscleBreakdownRangeToggle">${rangeLabel}</span>
+        </div>
+        <p class="text-sm text-faint" style="padding:2px 0;">No sets logged ${rangeLabel==='all time'?'yet':rangeLabel}.</p>
+      </div>
+    `;
+    document.getElementById('muscleBreakdownRangeToggle').addEventListener('click', cycleMuscleBreakdownRange);
     return;
   }
   const maxCount = Math.max(...entries.map(e=>e[1]));
@@ -2454,7 +2583,7 @@ function renderMuscleBreakdown(){
     <div class="progress-chart-card">
       <div class="progress-chart-title">
         <h3>Sets by muscle group</h3>
-        <span class="sub">all time</span>
+        <span class="sub muscle-range-toggle" id="muscleBreakdownRangeToggle">${rangeLabel}</span>
       </div>
       ${entries.map(([muscle,count])=>{
         const pct = Math.max(4, Math.round((count/maxCount)*100));
@@ -2466,6 +2595,12 @@ function renderMuscleBreakdown(){
       }).join('')}
     </div>
   `;
+  document.getElementById('muscleBreakdownRangeToggle').addEventListener('click', cycleMuscleBreakdownRange);
+}
+
+function cycleMuscleBreakdownRange(){
+  muscleBreakdownRange = muscleBreakdownRange==='all' ? 'monthly' : muscleBreakdownRange==='monthly' ? 'weekly' : 'all';
+  renderMuscleBreakdown();
 }
 
 function renderBodyWeightCard(){
@@ -3297,6 +3432,44 @@ document.addEventListener('click', (e)=>{
 function showSessionDetail(session){
   const d = parseISO(session.date);
   const isToday = session.date===todayISO();
+  const isGeneralWalk = session.type==='walk' && session.exercises.length===0;
+
+  if(isGeneralWalk){
+    document.getElementById('exerciseDetailHeader').innerHTML = `
+      <div class="session-detail-hero">
+        <div>
+          <div class="session-detail-date">${d.toLocaleDateString(undefined,{weekday:'long', month:'long', day:'numeric'})}</div>
+          <div class="session-detail-type">Walk${isToday?' · Today':''}</div>
+        </div>
+      </div>
+      <div class="session-detail-stat-grid">
+        <div class="stat-box"><div class="v num">${session.steps ? session.steps.toLocaleString() : '–'}</div><div class="l">Steps</div></div>
+        <div class="stat-box"><div class="v num">${session.distanceKm || '–'}</div><div class="l">Km</div></div>
+        <div class="stat-box"><div class="v num" style="color:var(--positive);">${Math.round(sessionTotalKcal(session))}</div><div class="l">Kcal</div></div>
+      </div>
+    `;
+    document.getElementById('exerciseDetailContent').innerHTML = '';
+    document.getElementById('exerciseDetailFooter').innerHTML = `
+      <button class="btn btn-danger btn-block" id="btnDeleteSession" data-del="${session.id}">Delete this walk</button>
+    `;
+    openSheet('sheetExerciseDetail');
+    document.getElementById('btnDeleteSession').addEventListener('click', async (e)=>{
+      const ok = await confirmDialog({
+        title: 'Delete this walk?',
+        message: 'This cannot be undone.',
+        confirmLabel: 'Delete walk'
+      });
+      if(ok){
+        state.sessions = state.sessions.filter(s=>s.id!==e.target.dataset.del);
+        saveState();
+        closeSheet('sheetExerciseDetail');
+        renderHome();
+        renderCalendar();
+        toast('Walk deleted');
+      }
+    });
+    return;
+  }
 
   document.getElementById('exerciseDetailHeader').innerHTML = `
     <div class="session-detail-hero">
