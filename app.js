@@ -9,7 +9,7 @@
 // stale/cached build can be identified at a glance instead of guessing —
 // if what you see on-device doesn't match what should have shipped, this
 // number tells you whether you're actually running the latest code.
-const APP_VERSION = 'v1.7.0';
+const APP_VERSION = 'v1.8.0';
 
 const STORAGE_KEY = 'gymtracker_data_v1';
 const LB_PER_KG = 2.20462;
@@ -796,6 +796,28 @@ document.getElementById('btnAddExerciseToTemplate').addEventListener('click', ()
   showView('log');
   renderExerciseLibrary();
 });
+
+document.getElementById('btnViewRoutineMuscles').addEventListener('click', ()=>{
+  const highlights = computeMuscleIntensityFromExerciseIds(editingTemplateExIds);
+  currentMuscleMapView = 'front';
+  renderMuscleMapCard('routineMusclesMap', highlights, {
+    title: 'Muscles worked',
+    emptyMessage: 'Add exercises to see which muscles this routine works.'
+  });
+  document.getElementById('muscleMapModalBackdrop').classList.add('open');
+  document.getElementById('muscleMapModal').classList.add('open');
+});
+
+function closeMuscleMapModal(){
+  document.getElementById('muscleMapModalBackdrop').classList.remove('open');
+  document.getElementById('muscleMapModal').classList.remove('open');
+  if(currentMuscleMapInstance){
+    currentMuscleMapInstance.destroy();
+    currentMuscleMapInstance = null;
+  }
+}
+document.getElementById('btnCloseMuscleMapModal').addEventListener('click', closeMuscleMapModal);
+document.getElementById('muscleMapModalBackdrop').addEventListener('click', closeMuscleMapModal);
 
 document.getElementById('btnSaveTemplateEdits').addEventListener('click', ()=>{
   const name = (document.getElementById('editTemplateNameInput').value||'').trim();
@@ -1734,13 +1756,12 @@ function showSessionSummary(session){
   `;
   document.getElementById('sheetSessionSummary').dataset.returnDate = session.date;
   currentMuscleMapView = 'front';
-  renderSessionMuscleMap(session);
+  renderMuscleMapCard('summaryMuscleMap', computeSessionMuscleIntensity(session), {title:'Muscles worked this session'});
   openSheet('sheetSessionSummary');
 }
 
 document.getElementById('btnCloseSummary').addEventListener('click', ()=>{
   closeSheet('sheetSessionSummary');
-  if(currentMuscleMapInstance){ currentMuscleMapInstance.destroy(); currentMuscleMapInstance = null; }
   const returnDate = document.getElementById('sheetSessionSummary').dataset.returnDate;
   if(returnDate && returnDate!==todayISO()){
     calCursor = parseISO(returnDate);
@@ -2282,32 +2303,68 @@ function computeSessionMuscleIntensity(session){
 let currentMuscleMapInstance = null;
 let currentMuscleMapView = 'front';
 
-function renderSessionMuscleMap(session){
-  const container = document.getElementById('summaryMuscleMap');
-  const highlights = computeSessionMuscleIntensity(session);
+// Routines have no logged sets yet, so there's no volume to weight by —
+// every exercise in the list simply counts as "this muscle group gets
+// worked", equally. Kept as a separate function from the session-volume
+// version above rather than overloading one function with an "estimate
+// mode" flag, since the two have genuinely different inputs (session with
+// real sets vs. a flat list of exercise ids) and conflating them risks
+// subtle bugs later if either one's logic changes.
+function computeMuscleIntensityFromExerciseIds(exIds){
+  const rawCount = {}; // group -> number of exercises touching it
+
+  exIds.forEach(exId=>{
+    const def = findExercise(exId);
+    if(!def || !def.bodyMap || def.bodyMap.length===0) return;
+    def.bodyMap.forEach(group=>{
+      rawCount[group] = (rawCount[group]||0) + 1;
+    });
+  });
+
+  const maxCount = Math.max(...Object.values(rawCount), 0);
+  if(maxCount===0) return [];
+
+  return Object.entries(rawCount).map(([group,count])=>({
+    group,
+    intensity: Math.max(12, Math.round((count/maxCount)*100))
+  }));
+}
+
+// Generic renderer used by the session summary, session detail, and routine
+// editor muscle-map views. `containerId` is the element the whole card gets
+// injected into; canvas/toggle ids are derived from it so multiple call
+// sites never collide even if more than one happened to exist in the DOM.
+function renderMuscleMapCard(containerId, highlights, opts={}){
+  const container = document.getElementById(containerId);
+  if(!container) return;
+  const title = opts.title || 'Muscles worked';
+  const canvasId = `${containerId}Canvas`;
+  const toggleId = `${containerId}Toggle`;
 
   if(highlights.length===0){
-    container.innerHTML = '';
+    container.innerHTML = opts.emptyMessage
+      ? `<p class="text-sm text-faint" style="padding:4px 2px;">${opts.emptyMessage}</p>`
+      : '';
     return;
   }
 
   if(!window.GymMuscleMap){
     // The muscle-map engine loads as an ES module in parallel with this
-    // classic script; on a slow load it may not be ready the instant a
-    // session finishes. Retry briefly rather than silently showing nothing.
+    // classic script; on a slow load it may not be ready the instant this
+    // is first called. Retry briefly rather than silently showing nothing.
     container.innerHTML = '';
-    setTimeout(()=>renderSessionMuscleMap(session), 100);
+    setTimeout(()=>renderMuscleMapCard(containerId, highlights, opts), 100);
     return;
   }
 
   container.innerHTML = `
     <div class="muscle-map-card">
-      <div class="muscle-map-title">Muscles worked this session</div>
-      <div class="progress-toggle" id="muscleMapViewToggle">
+      <div class="muscle-map-title">${title}</div>
+      <div class="progress-toggle" id="${toggleId}">
         <button class="progress-toggle-btn ${currentMuscleMapView==='front'?'active':''}" data-map-view="front">Front</button>
         <button class="progress-toggle-btn ${currentMuscleMapView==='back'?'active':''}" data-map-view="back">Back</button>
       </div>
-      <div class="muscle-map-canvas" id="muscleMapCanvas"></div>
+      <div class="muscle-map-canvas" id="${canvasId}"></div>
       <div class="muscle-map-legend">
         <span class="muscle-map-legend-label">Light</span>
         <div class="muscle-map-legend-gradient"></div>
@@ -2316,21 +2373,21 @@ function renderSessionMuscleMap(session){
     </div>
   `;
 
-  mountMuscleMap(highlights);
+  mountMuscleMap(canvasId, highlights);
 
-  document.getElementById('muscleMapViewToggle').addEventListener('click', (e)=>{
+  document.getElementById(toggleId).addEventListener('click', (e)=>{
     const btn = e.target.closest('[data-map-view]');
     if(!btn) return;
     currentMuscleMapView = btn.dataset.mapView;
-    document.querySelectorAll('#muscleMapViewToggle .progress-toggle-btn').forEach(b=>{
+    document.querySelectorAll(`#${toggleId} .progress-toggle-btn`).forEach(b=>{
       b.classList.toggle('active', b===btn);
     });
-    mountMuscleMap(highlights);
+    mountMuscleMap(canvasId, highlights);
   });
 }
 
-function mountMuscleMap(highlights){
-  const canvas = document.getElementById('muscleMapCanvas');
+function mountMuscleMap(canvasId, highlights){
+  const canvas = document.getElementById(canvasId);
   if(!canvas) return;
   canvas.innerHTML = '';
 
@@ -2985,11 +3042,23 @@ function closeSheet(id){
   document.getElementById('sheetBackdrop').classList.remove('open');
   document.getElementById(id).classList.remove('open');
   document.body.classList.remove('sheet-open');
+  // Any sheet that might contain a mounted muscle map (summary, session
+  // detail, routine editor) should stop rendering it once hidden — a single
+  // check here covers every close path (buttons, swipe-dismiss, backdrop
+  // tap) instead of needing to remember it at each call site.
+  if(currentMuscleMapInstance){
+    currentMuscleMapInstance.destroy();
+    currentMuscleMapInstance = null;
+  }
 }
 document.getElementById('sheetBackdrop').addEventListener('click', ()=>{
   document.querySelectorAll('.sheet.open').forEach(s=>s.classList.remove('open'));
   document.getElementById('sheetBackdrop').classList.remove('open');
   document.body.classList.remove('sheet-open');
+  if(currentMuscleMapInstance){
+    currentMuscleMapInstance.destroy();
+    currentMuscleMapInstance = null;
+  }
 });
 
 /* ---------------- VIDEO TUTORIAL MODAL ----------------
@@ -3093,6 +3162,10 @@ function onSheetSwipeEnd(e){
       document.getElementById('sheetBackdrop').classList.remove('open');
       document.body.classList.remove('sheet-open');
     }
+    if(currentMuscleMapInstance){
+      currentMuscleMapInstance.destroy();
+      currentMuscleMapInstance = null;
+    }
   }
   // else: removing the inline transform naturally snaps it back to .open's translateY(0)
 
@@ -3129,7 +3202,10 @@ function showSessionDetail(session){
   `;
 
   const content = document.getElementById('exerciseDetailContent');
-  content.innerHTML = wrapSupersetPairs(session.exercises, ex=>renderSessionExerciseCard(ex));
+  content.innerHTML = `<div id="sessionDetailMuscleMap" class="mb-16"></div>` +
+    wrapSupersetPairs(session.exercises, ex=>renderSessionExerciseCard(ex));
+
+  renderMuscleMapCard('sessionDetailMuscleMap', computeSessionMuscleIntensity(session), {title:'Muscles worked this session'});
 
   document.getElementById('exerciseDetailFooter').innerHTML = `
     <button class="btn btn-danger btn-block" id="btnDeleteSession" data-del="${session.id}">Delete this session</button>
