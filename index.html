@@ -232,6 +232,7 @@ main{max-width:640px; margin:0 auto; padding:18px 16px 40px;}
   text-transform:uppercase; letter-spacing:0.03em;
 }
 .pill-accent{background:var(--accent-glow); color:var(--accent); border-color:var(--accent-dim);}
+.pill-cyan{background:#3ad6ff14; color:var(--cyan); border-color:#3ad6ff40;}
 .pill-positive{background:var(--positive-dim); color:var(--positive); border-color:#39ff9a38;}
 
 .empty-state{
@@ -445,6 +446,31 @@ main{max-width:640px; margin:0 auto; padding:18px 16px 40px;}
   gap:10px; margin-bottom:16px; flex-wrap:wrap;
 }
 .rest-config-label{font-size:11.5px; color:var(--text-faint); font-weight:600; text-transform:uppercase; letter-spacing:0.03em; white-space:nowrap;}
+.rest-picker-btn{
+  display:flex; align-items:center; gap:6px; padding:7px 13px; border-radius:99px;
+  background:var(--panel); border:1px solid var(--border); color:var(--text);
+  font-size:12.5px; font-weight:700;
+}
+.rest-picker-btn:active{border-color:var(--accent-dim); color:var(--accent);}
+.rest-picker-btn svg{flex-shrink:0;}
+.rest-picker-options{display:flex; flex-direction:column; gap:8px;}
+.rest-picker-option{
+  padding:11px; border-radius:10px; font-size:14px; font-weight:700; text-align:center;
+  background:var(--panel-raised); border:1px solid var(--border); color:var(--text);
+  transition:background .15s, border-color .15s, color .15s;
+}
+.rest-picker-option:active, .rest-picker-option.active{background:var(--accent-dim); color:var(--accent); border-color:var(--accent);}
+
+.ex-action-btn{
+  display:flex; align-items:center; gap:4px; padding:5px 9px; border-radius:8px;
+  background:var(--panel-raised); border:1px solid var(--border); color:var(--text-faint);
+  font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.02em;
+}
+.ex-action-btn svg{width:11px; height:11px;}
+.ex-action-btn:active{border-color:var(--cyan); color:var(--cyan);}
+.ex-action-btn.linked{color:var(--cyan); border-color:var(--cyan); background:rgba(58,214,255,0.1);}
+.ex-action-btn.rest-customized{color:var(--accent); border-color:var(--accent-dim);}
+
 .rest-chip-group{display:flex; gap:6px; flex-wrap:wrap;}
 .rest-chip{
   padding:6px 12px; border-radius:99px; font-size:12px; font-weight:700;
@@ -604,12 +630,13 @@ main:has(#view-log.active){padding-bottom:0;}
   border-radius:12px; padding:16px; margin-bottom:12px;
 }
 .logging-exercise-header{
-  display:flex; align-items:center; justify-content:space-between; margin-bottom:12px;
+  display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; gap:8px;
 }
-.logging-exercise-header h3{font-size:14.5px; font-weight:700;}
-.remove-ex-btn{color:var(--text-faint); background:none; border:none; padding:4px;}
+.logging-exercise-header h3{font-size:14.5px; font-weight:700; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+.remove-ex-btn{color:var(--text-faint); background:none; border:none; padding:4px; flex-shrink:0;}
 .remove-ex-btn svg{width:17px; height:17px;}
 .remove-ex-btn:active{color:var(--danger);}
+.logging-exercise-header-actions{display:flex; align-items:center; gap:6px; flex-shrink:0;}
 
 .superset-pair{
   border:1px solid var(--cyan); border-radius:14px;
@@ -1250,13 +1277,10 @@ body.sheet-open{overflow:hidden;}
 
     <div class="rest-config-row">
       <span class="rest-config-label">Rest between sets</span>
-      <div class="rest-chip-group" id="restDurationChips">
-        <button class="rest-chip" data-rest="30">30s</button>
-        <button class="rest-chip" data-rest="60">60s</button>
-        <button class="rest-chip active" data-rest="90">90s</button>
-        <button class="rest-chip" data-rest="120">2m</button>
-        <button class="rest-chip" data-rest="180">3m</button>
-      </div>
+      <button class="rest-picker-btn" id="btnOpenRestPicker" data-rest-picker="session">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>
+        <span id="sessionRestLabel">90s</span>
+      </button>
     </div>
 
     <div id="backdateBanner" style="display:none;" class="card mb-12">
@@ -1635,6 +1659,23 @@ body.sheet-open{overflow:hidden;}
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
     </button>
     <div id="routineMusclesMap"></div>
+  </div>
+</div>
+
+<div class="muscles-modal-backdrop" id="restPickerModalBackdrop"></div>
+<div class="muscles-modal" id="restPickerModal" style="max-width:300px;">
+  <div class="muscles-modal-content">
+    <button class="muscles-modal-close" id="btnCloseRestPicker" aria-label="Close">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+    </button>
+    <div class="muscle-map-title" id="restPickerTitle" style="padding-right:36px;">Rest between sets</div>
+    <div class="rest-picker-options" id="restPickerOptions">
+      <button class="rest-picker-option" data-rest-value="30">30s</button>
+      <button class="rest-picker-option" data-rest-value="60">60s</button>
+      <button class="rest-picker-option" data-rest-value="90">90s</button>
+      <button class="rest-picker-option" data-rest-value="120">2m</button>
+      <button class="rest-picker-option" data-rest-value="180">3m</button>
+    </div>
   </div>
 </div>
 
