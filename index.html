@@ -755,6 +755,22 @@ body.workout-active{padding-bottom:calc(96px + env(safe-area-inset-bottom));}
 .progress-toggle-btn.active{background:var(--accent-dim); color:var(--accent);}
 .progress-panel{animation:fadein .2s ease;}
 
+.muscle-map-card{
+  background:var(--panel); border:1px solid var(--border); border-radius:14px;
+  padding:16px; margin-top:16px;
+}
+.muscle-map-title{
+  font-size:11px; color:var(--cyan); text-transform:uppercase; letter-spacing:.05em; font-weight:700;
+  margin-bottom:12px;
+}
+.muscle-map-canvas{max-width:220px; margin:0 auto;}
+.muscle-map-legend{display:flex; align-items:center; justify-content:center; gap:8px; margin-top:12px;}
+.muscle-map-legend-gradient{
+  width:80px; height:8px; border-radius:99px;
+  background:linear-gradient(90deg, rgba(255,0,0,0.12), rgba(255,0,0,1));
+}
+.muscle-map-legend-label{font-size:9.5px; color:var(--text-faint); text-transform:uppercase; letter-spacing:.03em; font-weight:600;}
+
 /* Exercises panel: search bar fixed at top, only the list itself scrolls.
    Height is the full viewport minus: the panel's own top offset (sticky
    header + main's top padding), main's bottom padding, and the space
@@ -1426,6 +1442,7 @@ body.sheet-open{overflow:hidden;}
   <div class="sheet-handle-hitarea"><div class="sheet-handle"></div></div>
   <div class="sheet-title">Session complete</div>
   <div id="summaryContent"></div>
+  <div id="summaryMuscleMap"></div>
   <button class="btn btn-secondary btn-block mt-16" id="btnSaveAsTemplate">Save as routine</button>
   <button class="btn btn-primary btn-block mt-8" id="btnCloseSummary">Done</button>
 </div>
@@ -1524,6 +1541,7 @@ body.sheet-open{overflow:hidden;}
 
 <script src="firebase-config.js"></script>
 <script type="module" src="firebase-sync.js"></script>
+<script type="module" src="muscle-map-bridge.js"></script>
 <script src="exercises.js"></script>
 <script src="app.js"></script>
 </body>
