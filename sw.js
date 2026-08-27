@@ -6,7 +6,7 @@
    imports from gstatic.com) are left alone entirely — never cached, always
    fetched normally, since caching third-party CDN code here isn't useful. */
 
-const CACHE_NAME = 'gym-tracker-cache-v69';
+const CACHE_NAME = 'gym-tracker-cache-v8';
 const ASSETS = [
   './',
   './index.html',
@@ -15,11 +15,19 @@ const ASSETS = [
   './manifest.json',
   './firebase-config.js',
   './firebase-sync.js',
+  './muscle-map-bridge.js',
   './icons/icon-192.png',
   './icons/icon-512.png',
   './icons/icon-maskable-192.png',
   './icons/icon-maskable-512.png',
-  './icons/apple-touch-icon.png'
+  './icons/apple-touch-icon.png',
+  './body/MuscleMap.js',
+  './body/registry.js',
+  './body/constants.js',
+  './body/front.js',
+  './body/back.js',
+  './body/male-front-dark.webp',
+  './body/male-back-dark.webp'
 ];
 
 self.addEventListener('install', (event) => {
