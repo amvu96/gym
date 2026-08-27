@@ -9,7 +9,7 @@
 // stale/cached build can be identified at a glance instead of guessing —
 // if what you see on-device doesn't match what should have shipped, this
 // number tells you whether you're actually running the latest code.
-const APP_VERSION = 'v1.8.0';
+const APP_VERSION = 'v1.9.0';
 
 const STORAGE_KEY = 'gymtracker_data_v1';
 const LB_PER_KG = 2.20462;
@@ -3199,19 +3199,31 @@ function showSessionDetail(session){
       <div class="stat-box"><div class="v num">${session.durationMin}</div><div class="l">Minutes</div></div>
       <div class="stat-box"><div class="v num" style="color:var(--positive);">${Math.round(sessionTotalKcal(session))}</div><div class="l">Kcal</div></div>
     </div>
+    <button class="btn btn-secondary btn-block mb-16" id="btnViewSessionMuscles">
+      <i class="fa-solid fa-dumbbell"></i>
+      View muscles worked
+    </button>
   `;
 
   const content = document.getElementById('exerciseDetailContent');
-  content.innerHTML = `<div id="sessionDetailMuscleMap" class="mb-16"></div>` +
-    wrapSupersetPairs(session.exercises, ex=>renderSessionExerciseCard(ex));
-
-  renderMuscleMapCard('sessionDetailMuscleMap', computeSessionMuscleIntensity(session), {title:'Muscles worked this session'});
+  content.innerHTML = wrapSupersetPairs(session.exercises, ex=>renderSessionExerciseCard(ex));
 
   document.getElementById('exerciseDetailFooter').innerHTML = `
     <button class="btn btn-danger btn-block" id="btnDeleteSession" data-del="${session.id}">Delete this session</button>
   `;
 
   openSheet('sheetExerciseDetail');
+
+  document.getElementById('btnViewSessionMuscles').addEventListener('click', ()=>{
+    const highlights = computeSessionMuscleIntensity(session);
+    currentMuscleMapView = 'front';
+    renderMuscleMapCard('routineMusclesMap', highlights, {
+      title: 'Muscles worked this session',
+      emptyMessage: 'No strength exercises with tracked muscles in this session.'
+    });
+    document.getElementById('muscleMapModalBackdrop').classList.add('open');
+    document.getElementById('muscleMapModal').classList.add('open');
+  });
 
   content.querySelectorAll('[data-video-thumb]').forEach(el=>{
     el.addEventListener('click', (e)=>{
