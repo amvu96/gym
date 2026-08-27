@@ -9,7 +9,7 @@
 // stale/cached build can be identified at a glance instead of guessing —
 // if what you see on-device doesn't match what should have shipped, this
 // number tells you whether you're actually running the latest code.
-const APP_VERSION = 'v1.6.0';
+const APP_VERSION = 'v1.7.0';
 
 const STORAGE_KEY = 'gymtracker_data_v1';
 const LB_PER_KG = 2.20462;
@@ -1733,11 +1733,14 @@ function showSessionSummary(session){
     </div>
   `;
   document.getElementById('sheetSessionSummary').dataset.returnDate = session.date;
+  currentMuscleMapView = 'front';
+  renderSessionMuscleMap(session);
   openSheet('sheetSessionSummary');
 }
 
 document.getElementById('btnCloseSummary').addEventListener('click', ()=>{
   closeSheet('sheetSessionSummary');
+  if(currentMuscleMapInstance){ currentMuscleMapInstance.destroy(); currentMuscleMapInstance = null; }
   const returnDate = document.getElementById('sheetSessionSummary').dataset.returnDate;
   if(returnDate && returnDate!==todayISO()){
     calCursor = parseISO(returnDate);
@@ -2234,6 +2237,117 @@ function renderVolumeChart(){
       </div>
     </div>
   `;
+}
+
+// Computes a 0-100 intensity per body-highlighter muscle group for one
+// session, weighted by volume (weight x reps), same weighting already used
+// elsewhere for the all-time muscle-group chart. An exercise that maps to
+// several groups (e.g. deadlift -> lower_back, glutes, hamstrings, lats)
+// contributes its full volume to each — it genuinely worked all of them,
+// this isn't meant to be a zero-sum split across groups.
+function computeSessionMuscleIntensity(session){
+  const rawVolume = {}; // group -> total weight*reps
+
+  session.exercises.forEach(ex=>{
+    if(!ex.sets || !ex.sets.length || ex.sets[0].isWalk) return;
+    const def = findExercise(ex.exId);
+    if(!def || !def.bodyMap || def.bodyMap.length===0) return;
+
+    let exVolume = 0;
+    ex.sets.forEach(s=>{
+      if(s.warmup) return;
+      const w = parseFloat(s.weight)||0, r = parseFloat(s.reps)||0;
+      if(w>0 && r>0) exVolume += w*r;
+      else if(r>0) exVolume += r; // bodyweight exercises: reps alone still count as real work
+    });
+    if(exVolume<=0) return;
+
+    def.bodyMap.forEach(group=>{
+      rawVolume[group] = (rawVolume[group]||0) + exVolume;
+    });
+  });
+
+  const maxVolume = Math.max(...Object.values(rawVolume), 0);
+  if(maxVolume===0) return [];
+
+  // Normalize to 0-100 relative to this session's own hardest-worked group,
+  // with a floor so a lightly-touched muscle still shows a faint tint rather
+  // than being visually indistinguishable from "not worked at all".
+  return Object.entries(rawVolume).map(([group,vol])=>({
+    group,
+    intensity: Math.max(12, Math.round((vol/maxVolume)*100))
+  }));
+}
+
+let currentMuscleMapInstance = null;
+let currentMuscleMapView = 'front';
+
+function renderSessionMuscleMap(session){
+  const container = document.getElementById('summaryMuscleMap');
+  const highlights = computeSessionMuscleIntensity(session);
+
+  if(highlights.length===0){
+    container.innerHTML = '';
+    return;
+  }
+
+  if(!window.GymMuscleMap){
+    // The muscle-map engine loads as an ES module in parallel with this
+    // classic script; on a slow load it may not be ready the instant a
+    // session finishes. Retry briefly rather than silently showing nothing.
+    container.innerHTML = '';
+    setTimeout(()=>renderSessionMuscleMap(session), 100);
+    return;
+  }
+
+  container.innerHTML = `
+    <div class="muscle-map-card">
+      <div class="muscle-map-title">Muscles worked this session</div>
+      <div class="progress-toggle" id="muscleMapViewToggle">
+        <button class="progress-toggle-btn ${currentMuscleMapView==='front'?'active':''}" data-map-view="front">Front</button>
+        <button class="progress-toggle-btn ${currentMuscleMapView==='back'?'active':''}" data-map-view="back">Back</button>
+      </div>
+      <div class="muscle-map-canvas" id="muscleMapCanvas"></div>
+      <div class="muscle-map-legend">
+        <span class="muscle-map-legend-label">Light</span>
+        <div class="muscle-map-legend-gradient"></div>
+        <span class="muscle-map-legend-label">Heavy</span>
+      </div>
+    </div>
+  `;
+
+  mountMuscleMap(highlights);
+
+  document.getElementById('muscleMapViewToggle').addEventListener('click', (e)=>{
+    const btn = e.target.closest('[data-map-view]');
+    if(!btn) return;
+    currentMuscleMapView = btn.dataset.mapView;
+    document.querySelectorAll('#muscleMapViewToggle .progress-toggle-btn').forEach(b=>{
+      b.classList.toggle('active', b===btn);
+    });
+    mountMuscleMap(highlights);
+  });
+}
+
+function mountMuscleMap(highlights){
+  const canvas = document.getElementById('muscleMapCanvas');
+  if(!canvas) return;
+  canvas.innerHTML = '';
+
+  if(currentMuscleMapInstance){
+    currentMuscleMapInstance.destroy();
+    currentMuscleMapInstance = null;
+  }
+
+  currentMuscleMapInstance = new window.GymMuscleMap(canvas, {
+    view: currentMuscleMapView,
+    gender: 'male',
+    theme: 'dark',
+    bodySrc: { front: './body/male-front-dark.webp', back: './body/male-back-dark.webp' },
+    color: '#ff3b3b',
+    hoverHighlight: false,
+    highlights: highlights.map(h=>({ group: h.group, intensity: h.intensity })),
+  });
 }
 
 function renderMuscleBreakdown(){
