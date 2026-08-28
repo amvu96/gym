@@ -1451,7 +1451,10 @@ body.sheet-open{overflow:hidden;}
       <div class="row mb-16">
         <button class="cal-nav-btn" id="btnBackToGroups"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button>
         <h2 id="groupDetailName" style="flex:1; text-align:center; margin:0;">—</h2>
-        <button class="cal-nav-btn" id="btnInviteMembers"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3.13a4 4 0 0 1 0 7.75"/><path d="M12 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8" cy="7" r="4"/><path d="M20 8v6M23 11h-6"/></svg></button>
+        <div style="display:flex; gap:6px;">
+          <button class="cal-nav-btn" id="btnNtfySettings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg></button>
+          <button class="cal-nav-btn" id="btnInviteMembers"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3.13a4 4 0 0 1 0 7.75"/><path d="M12 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8" cy="7" r="4"/><path d="M20 8v6M23 11h-6"/></svg></button>
+        </div>
       </div>
 
       <div class="group-members-row" id="groupMembersRow"></div>
@@ -1719,6 +1722,14 @@ body.sheet-open{overflow:hidden;}
   <div class="invite-link-box" id="inviteLinkText">—</div>
   <button class="btn btn-primary btn-block mb-8" id="btnShareInviteLink">Share invite link</button>
   <button class="btn btn-secondary btn-block" id="btnCopyInviteLink">Copy link</button>
+</div>
+
+<div class="sheet sheet-fixed-height" id="sheetNtfySettings">
+  <div class="sheet-handle-hitarea"><div class="sheet-handle"></div></div>
+  <div class="sheet-title">Push notifications</div>
+  <div class="sheet-scroll-body">
+    <div id="ntfySettingsContent"></div>
+  </div>
 </div>
 
 <div class="sheet" id="sheetNewChallenge">
