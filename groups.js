@@ -76,6 +76,11 @@ import {
         myGroups = [];
         if(document.getElementById('view-groups').classList.contains('active')) renderRoot();
       }
+      // If the invite-landing panel is open (e.g. they just tapped
+      // "Sign in with Google" from it), refresh it so the Accept button
+      // appears now that we know who they are — signing in and accepting
+      // are two distinct, explicit steps, not one auto-join.
+      if(pendingInviteGroup) renderInvitePanel();
     });
 
     // Deep-link join: #join=CODE
@@ -86,15 +91,27 @@ import {
     }
 
     bindStaticUI();
+
+    // A join link can land while the app boots straight to Home — jump to
+    // the Groups tab ourselves instead of leaving the code stranded until
+    // the person happens to tap the tab manually.
+    if(pendingJoinCode && ui().showView){
+      ui().showView('groups');
+    }
   }
 
   let pendingJoinCode = null;
+  let pendingInviteGroup = null; // {id, name, ownerUid, memberUids, inviteCode} once looked up
 
   function onShow(){
     // Called by app.js's showView('groups')
     if(pendingJoinCode){
       const code = pendingJoinCode; pendingJoinCode = null;
       handleJoinDeepLink(code);
+      return;
+    }
+    if(pendingInviteGroup){
+      renderInvitePanel();
       return;
     }
     if(activeGroupId){
@@ -104,9 +121,108 @@ import {
     }
   }
 
+  // Re-render the currently open group's detail panel (used when returning
+  // to the Groups tab without a pending join code, e.g. Home → Groups →
+  // back). Listeners already keep the data fresh; this just re-shows the
+  // right panel and repaints from state already in memory.
+  function renderDetail(){
+    document.getElementById('groupsPanelList').style.display = 'none';
+    document.getElementById('groupsPanelInvite').style.display = 'none';
+    document.getElementById('groupsPanelDetail').style.display = '';
+    document.getElementById('groupDetailName').textContent = activeGroup ? activeGroup.name : '—';
+    renderMembersRow();
+    renderChallengeCard();
+    renderGroupCalendar();
+  }
+
+  // Looks the group up by its invite code (allowed unauthenticated — see
+  // firestore.rules) and shows the invite-landing panel rather than joining
+  // immediately, so the person always sees what they're accepting first.
   async function handleJoinDeepLink(code){
-    if(!requireSignedIn('Sign in to join a group')) { renderRoot(); return; }
-    await joinByCode(code);
+    if(!db){ toast('Cloud sync isn\'t configured — groups need it.'); renderRoot(); return; }
+    try{
+      const q = query(collection(db, 'groups'), where('inviteCode', '==', code.toUpperCase()), limit(1));
+      const snap = await getDocs(q);
+      if(snap.empty){ toast('That invite link is invalid or expired'); renderRoot(); return; }
+      const gDoc = snap.docs[0];
+      pendingInviteGroup = {id: gDoc.id, ...gDoc.data()};
+      renderInvitePanel();
+    }catch(e){
+      console.error(e);
+      toast('Could not load that invite');
+      renderRoot();
+    }
+  }
+
+  function renderInvitePanel(){
+    document.getElementById('groupsPanelList').style.display = 'none';
+    document.getElementById('groupsPanelDetail').style.display = 'none';
+    document.getElementById('groupsPanelInvite').style.display = '';
+    document.getElementById('inviteGroupName').textContent = pendingInviteGroup.name;
+
+    const signInBtn = document.getElementById('btnInviteSignIn');
+    const acceptBtn = document.getElementById('btnInviteAccept');
+    const statusEl = document.getElementById('inviteStatusText');
+    signInBtn.style.display = 'none';
+    acceptBtn.style.display = 'none';
+    statusEl.style.display = 'none';
+    statusEl.textContent = '';
+
+    const memberUids = pendingInviteGroup.memberUids || [];
+    const alreadyMember = !!(currentUser && memberUids.includes(currentUser.uid));
+    const isFull = memberUids.length >= MAX_MEMBERS;
+
+    if(!currentUser){
+      signInBtn.style.display = '';
+    } else if(alreadyMember){
+      statusEl.textContent = "You're already in that group.";
+      statusEl.style.display = '';
+      acceptBtn.textContent = 'Open group';
+      acceptBtn.style.display = '';
+    } else if(isFull){
+      statusEl.textContent = 'This group is full (8/8 members).';
+      statusEl.style.display = '';
+    } else {
+      acceptBtn.textContent = 'Accept';
+      acceptBtn.style.display = '';
+    }
+  }
+
+  function clearPendingInvite(){
+    pendingInviteGroup = null;
+    document.getElementById('groupsPanelInvite').style.display = 'none';
+  }
+
+  async function onInviteSignIn(){
+    if(!db){ toast('Cloud sync isn\'t configured — groups need it.'); return; }
+    try{
+      await window.GymSync.signIn();
+    }catch(e){ /* handled inside signIn() itself */ }
+    // onAuthStateChanged can land a beat after the popup promise resolves —
+    // poll briefly rather than assuming it's already landed.
+    for(let i=0; i<20 && !currentUser; i++){
+      await new Promise(r=>setTimeout(r, 100));
+      currentUser = window.GymSync.getCurrentUser();
+    }
+    if(pendingInviteGroup) renderInvitePanel();
+  }
+
+  async function onInviteAccept(){
+    if(!pendingInviteGroup || !currentUser) return;
+    const memberUids = pendingInviteGroup.memberUids || [];
+    if(memberUids.includes(currentUser.uid)){
+      const id = pendingInviteGroup.id;
+      clearPendingInvite();
+      openGroup(id);
+      return;
+    }
+    const ok = await joinGroupById(pendingInviteGroup.id);
+    if(ok){
+      const id = pendingInviteGroup.id;
+      clearPendingInvite();
+      toast('Joined group');
+      openGroup(id);
+    }
   }
 
   function requireSignedIn(msg){
@@ -136,6 +252,7 @@ import {
 
   function renderRoot(){
     document.getElementById('groupsPanelDetail').style.display = 'none';
+    document.getElementById('groupsPanelInvite').style.display = 'none';
     document.getElementById('groupsPanelList').style.display = '';
 
     const container = document.getElementById('groupsListContainer');
@@ -196,6 +313,13 @@ import {
     document.getElementById('btnBackToGroups').addEventListener('click', closeGroup);
     document.getElementById('btnInviteMembers').addEventListener('click', showInviteSheet);
     document.getElementById('btnLeaveGroup').addEventListener('click', leaveActiveGroup);
+
+    document.getElementById('btnInviteSignIn').addEventListener('click', onInviteSignIn);
+    document.getElementById('btnInviteAccept').addEventListener('click', onInviteAccept);
+    document.getElementById('btnInviteCancel').addEventListener('click', ()=>{
+      clearPendingInvite();
+      renderRoot();
+    });
 
     document.getElementById('btnNewChallenge').addEventListener('click', ()=>{
       document.getElementById('challengeTitleInput').value = '';
@@ -263,8 +387,7 @@ import {
       const q = query(collection(db, 'groups'), where('inviteCode', '==', code.toUpperCase()), limit(1));
       const snap = await getDocs(q);
       if(snap.empty){ toast('No group found with that code'); return; }
-      const groupDoc = snap.docs[0];
-      const groupId = groupDoc.id;
+      const groupId = snap.docs[0].id;
 
       const memberRef = doc(db, 'groups', groupId, 'members', currentUser.uid);
       const existing = await getDoc(memberRef);
@@ -274,9 +397,25 @@ import {
         return;
       }
 
-      // Transaction: atomically check capacity + claim the next free color,
-      // so two people tapping "join" at the same moment can't both grab the
-      // same color or push the group past MAX_MEMBERS.
+      const ok = await joinGroupById(groupId);
+      if(ok){
+        ui().closeSheet('sheetJoinGroup');
+        toast('Joined group');
+        openGroup(groupId);
+      }
+    }catch(e){
+      console.error(e);
+      toast(e.message || 'Could not join group');
+    }
+  }
+
+  // Shared join transaction, used both by the code-entry sheet and the
+  // invite-landing page's Accept button. Atomically checks capacity and
+  // claims the next free color, so two people accepting at the same moment
+  // can't both grab the same color or push the group past MAX_MEMBERS.
+  // Returns true on success, false (after toasting) on failure.
+  async function joinGroupById(groupId){
+    try{
       await runTransaction(db, async (tx)=>{
         const gRef = doc(db, 'groups', groupId);
         const gSnap = await tx.get(gRef);
@@ -286,7 +425,6 @@ import {
         if(memberUids.includes(currentUser.uid)) return; // already a member
         if(memberUids.length >= MAX_MEMBERS) throw new Error('This group is full (8/8 members)');
 
-        const usedIdx = new Set();
         // We can't read the whole members subcollection inside a transaction
         // against an arbitrary-length list cheaply, so colorIndex is derived
         // from position in memberUids, which we already have transactionally.
@@ -302,13 +440,11 @@ import {
           joinedAt: Date.now()
         });
       });
-
-      ui().closeSheet('sheetJoinGroup');
-      toast('Joined group');
-      openGroup(groupId);
+      return true;
     }catch(e){
       console.error(e);
       toast(e.message || 'Could not join group');
+      return false;
     }
   }
 
@@ -373,6 +509,7 @@ import {
     activeGroupId = groupId;
     calCursor = new Date();
     document.getElementById('groupsPanelList').style.display = 'none';
+    document.getElementById('groupsPanelInvite').style.display = 'none';
     document.getElementById('groupsPanelDetail').style.display = '';
     document.getElementById('groupDetailName').textContent = 'Loading…';
     document.getElementById('groupMembersRow').innerHTML = '';
@@ -392,6 +529,7 @@ import {
       activeMembers = snap.docs.map(d=>d.data()).sort((a,b)=>a.colorIndex-b.colorIndex);
       renderMembersRow();
       renderGroupCalendar(); // legend depends on members
+      healOwnMemberDoc();
     });
 
     listenToActiveChallenge();
@@ -415,14 +553,36 @@ import {
     row.innerHTML = activeMembers.map(m=>`
       <div class="group-member-chip" title="${escapeHtml(m.displayName)}">
         <span class="group-color-dot" style="background:${m.color}"></span>
-        ${escapeHtml(firstName(m.displayName))}
+        ${escapeHtml(firstName(m.displayName))}${isOwnerUid(m.uid) ? ' <span class="group-crown" title="Group owner">👑</span>' : ''}
       </div>
-    `).join('') + (activeGroup && activeGroup.ownerUid===currentUser.uid ? `<div class="group-member-chip group-member-chip-muted">${activeMembers.length}/${MAX_MEMBERS}</div>` : '');
+    `).join('') + (activeGroup && currentUser && activeGroup.ownerUid===currentUser.uid ? `<div class="group-member-chip group-member-chip-muted">${activeMembers.length}/${MAX_MEMBERS}</div>` : '');
     const leaveBtn = document.getElementById('btnLeaveGroup');
     leaveBtn.style.display = activeMembers.length ? '' : 'none';
   }
 
+  function isOwnerUid(uid){
+    return !!(activeGroup && activeGroup.ownerUid === uid);
+  }
+
   function firstName(name){ return (name||'Member').split(' ')[0]; }
+
+  // Repairs this user's own member doc if the name/photo it holds is stale
+  // (e.g. saved before the auth-name bug fix, or the person renamed their
+  // Google account since joining). Only ever touches the caller's own doc —
+  // matches the Firestore rule that a member can update only themselves.
+  async function healOwnMemberDoc(){
+    if(!currentUser || !activeGroupId) return;
+    const mine = activeMembers.find(m=>m.uid===currentUser.uid);
+    if(!mine) return;
+    const wantName = currentUser.name || 'Member';
+    const wantPhoto = currentUser.photo || '';
+    if(mine.displayName === wantName && (mine.photoURL||'') === wantPhoto) return;
+    try{
+      await updateDoc(doc(db, 'groups', activeGroupId, 'members', currentUser.uid), {
+        displayName: wantName, photoURL: wantPhoto
+      });
+    }catch(e){ console.error('member doc heal failed', e); }
+  }
 
   function listenToActiveChallenge(){
     const q = query(
@@ -628,7 +788,7 @@ import {
         return `<div class="row" style="padding:8px 0; border-bottom:1px solid var(--border-soft);">
           <div style="display:flex; align-items:center; gap:10px;">
             <span class="group-color-dot" style="background:${m.color}; opacity:${done?1:0.35};"></span>
-            <span style="${done?'':'color:var(--text-faint);'}">${escapeHtml(m.displayName)}</span>
+            <span style="${done?'':'color:var(--text-faint);'}">${escapeHtml(m.displayName)}${isOwnerUid(m.uid) ? ' <span class="group-crown" title="Group owner">👑</span>' : ''}</span>
           </div>
           <span style="${done?'color:var(--positive);':'color:var(--text-faint);'} font-size:13px;">${done?'✓ Done':'—'}</span>
         </div>`;
