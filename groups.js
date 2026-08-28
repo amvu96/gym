@@ -667,6 +667,14 @@ import {
     const content = document.getElementById('ntfySettingsContent');
     const topic = activeGroup ? activeGroup.ntfyTopic : null;
     const link = topic ? ntfySubscribeLink(topic) : null;
+    // The ntfy Android app registers the ntfy:// scheme and, per ntfy's own
+    // docs, ntfy://<host>/<topic> opens straight to that topic's detail
+    // view and subscribes automatically if not already subscribed — no
+    // typing the topic name in by hand. iOS/desktop don't register this
+    // scheme, so the button is Android-only; everyone else still has the
+    // plain https link/QR above as their path in.
+    const androidAppLink = topic ? `ntfy://ntfy.sh/${encodeURIComponent(topic)}?display=${encodeURIComponent(activeGroup.name)}` : null;
+    const isAndroid = /Android/i.test(navigator.userAgent);
 
     if(!topic){
       // Every group created going forward gets a topic automatically; this
@@ -679,11 +687,20 @@ import {
       <p class="text-sm text-muted mb-16">Get a real push notification — even with this app closed — whenever a teammate completes today's challenge. No app install required: open this group's ntfy page and tap <b>Subscribe</b>, then enable <b>background notifications</b> right there in the browser. (The <a href="https://ntfy.sh" target="_blank" rel="noopener" style="color:var(--accent);">ntfy app</a> works too, if you'd rather use it.)</p>
       <div class="invite-qr-wrap"><div id="ntfySubscribeQr"></div></div>
       <div class="invite-link-box">${escapeHtml(link)}</div>
-      <button class="btn btn-primary btn-block mb-8" id="btnOpenNtfyLink">Open ntfy.sh in a new tab</button>
+      ${isAndroid ? `<button class="btn btn-primary btn-block mb-8" id="btnOpenNtfyAndroidApp">Open in ntfy Android app</button>` : ''}
+      <button class="btn ${isAndroid ? 'btn-secondary' : 'btn-primary'} btn-block mb-8" id="btnOpenNtfyLink">Open ntfy.sh in a new tab</button>
       <button class="btn btn-secondary btn-block" id="btnCopyNtfyLink">Copy link</button>
       ${isOwner ? `<button class="btn btn-secondary btn-block mt-8" id="btnTestNtfyConfig">Send test notification</button>` : ''}
     `;
     renderQr(link, 'ntfySubscribeQr');
+    const androidBtn = document.getElementById('btnOpenNtfyAndroidApp');
+    if(androidBtn){
+      androidBtn.addEventListener('click', ()=>{
+        // A bare location change (not window.open) is what actually lets
+        // Android's intent-resolution kick in for a custom scheme like this.
+        window.location.href = androidAppLink;
+      });
+    }
     document.getElementById('btnOpenNtfyLink').addEventListener('click', ()=>{
       window.open(link, '_blank', 'noopener');
     });
