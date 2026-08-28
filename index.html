@@ -370,6 +370,16 @@ main{max-width:640px; margin:0 auto; padding:18px 16px 40px;}
 .routine-card:active{border-color:var(--accent-dim); background:var(--panel-raised);}
 .routine-card .template-icon{width:42px; height:42px;}
 .routine-card .template-icon svg{width:19px; height:19px;}
+
+/* ---------------- ROUTINES TAB (list cards) ---------------- */
+.routine-list-card{
+  background:var(--panel); border:1px solid var(--border); border-radius:var(--radius-lg);
+  padding:12px; margin-bottom:10px; transition:border-color .15s;
+}
+.routine-list-card:active{border-color:var(--accent-dim);}
+.routine-list-top{display:flex; align-items:center; gap:10px;}
+.routine-list-icon{width:44px; height:44px; font-size:20px; flex-shrink:0;}
+.routine-list-actions{display:flex; gap:4px; flex-shrink:0;}
 .routine-card .template-info{flex:1; min-width:0;}
 .routine-card .template-title{font-size:14.5px; font-weight:700;}
 .routine-card .template-meta{font-size:12px; margin-top:2px;}
@@ -598,12 +608,15 @@ main:has(#view-log.active){padding-bottom:0;}
 
 /* Reorderable exercise list inside the routine editor */
 .reorder-item{
-  display:flex; align-items:center; gap:10px;
+  display:flex; flex-direction:column; gap:8px;
   padding:11px 12px; background:var(--panel); border:1px solid var(--border);
   border-radius:10px; margin-bottom:8px;
   position:relative;
   transition:transform .18s ease;
 }
+.reorder-item-top{display:flex; align-items:center; gap:10px;}
+.reorder-item-actions{display:flex; align-items:center; gap:8px; padding-left:38px;}
+.reorder-item-actions .reorder-nudge-group{margin-left:auto;}
 .reorder-item.dragging{
   z-index:60; border-color:var(--accent); box-shadow:0 10px 24px -6px rgba(0,0,0,0.55), 0 0 0 1px var(--accent-dim);
   background:var(--panel-raised);
@@ -1477,6 +1490,16 @@ body.sheet-open{overflow:hidden;}
     </div>
   </section>
 
+  <!-- ============ SHARED ROUTINE (import) VIEW ============ -->
+  <section class="view" id="view-shared-routine">
+    <div class="row mb-16">
+      <div style="width:38px;"></div>
+      <h2 style="flex:1; text-align:center; margin:0;">Shared routine</h2>
+      <button class="cal-nav-btn" id="btnDismissSharedRoutine"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
+    </div>
+    <div id="sharedRoutineContent"></div>
+  </section>
+
   <!-- ============ SETTINGS / DATA VIEW ============ -->
   <section class="view" id="view-settings">
     <div class="settings-group">
@@ -1769,6 +1792,16 @@ body.sheet-open{overflow:hidden;}
     <input type="text" id="templateNameInput" placeholder="e.g. Monday — Push day" autocomplete="off">
   </div>
   <button class="btn btn-primary btn-block" id="btnConfirmSaveTemplate">Save routine</button>
+</div>
+
+<div class="sheet" id="sheetShareRoutine">
+  <div class="sheet-handle-hitarea"><div class="sheet-handle"></div></div>
+  <div class="sheet-title">Share routine</div>
+  <p class="text-sm text-muted mb-16" id="shareRoutineNote">Anyone who opens this link or scans this code can see the routine and choose to import it into their own app. No account needed.</p>
+  <div class="invite-qr-wrap"><div id="shareRoutineQr"></div></div>
+  <div class="invite-link-box" id="shareRoutineLinkText">—</div>
+  <button class="btn btn-primary btn-block mb-8" id="btnShareRoutineNative">Share</button>
+  <button class="btn btn-secondary btn-block" id="btnCopyRoutineLink">Copy link</button>
 </div>
 
 <div class="sheet" id="sheetNotificationsExplainer">
