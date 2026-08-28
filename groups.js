@@ -476,6 +476,7 @@ import {
 
     document.getElementById('btnChallengeHistory').addEventListener('click', showChallengeHistorySheet);
     document.getElementById('btnActivityFeed').addEventListener('click', showActivityFeedSheet);
+    document.getElementById('btnLeaderboard').addEventListener('click', showLeaderboardSheet);
 
     document.getElementById('calGroupPrevMonth').addEventListener('click', ()=>{
       calCursor.setMonth(calCursor.getMonth()-1); renderGroupCalendar();
@@ -799,6 +800,7 @@ import {
       activeMembers = snap.docs.map(d=>d.data()).sort((a,b)=>a.colorIndex-b.colorIndex);
       renderMembersRow();
       renderGroupCalendar(); // legend depends on members
+      renderActivityBadge();
       healOwnMemberDoc();
     });
 
@@ -822,10 +824,11 @@ import {
 
   function renderMembersRow(){
     const row = document.getElementById('groupMembersRow');
+    const leaderUids = computeActiveLeaderUids();
     row.innerHTML = activeMembers.map(m=>`
       <div class="group-member-chip" title="${escapeHtml(m.displayName)}">
         <span class="group-color-dot" style="background:${m.color}"></span>
-        ${escapeHtml(firstName(m.displayName))}${isOwnerUid(m.uid) ? ' <span class="group-crown" title="Group owner">👑</span>' : ''}
+        ${escapeHtml(firstName(m.displayName))}${badgesForMember(m.uid, leaderUids)}
       </div>
     `).join('') + (activeGroup && currentUser && activeGroup.ownerUid===currentUser.uid ? `<div class="group-member-chip group-member-chip-muted">${activeMembers.length}/${MAX_MEMBERS}</div>` : '');
     const leaveBtn = document.getElementById('btnLeaveGroup');
@@ -834,6 +837,33 @@ import {
 
   function isOwnerUid(uid){
     return !!(activeGroup && activeGroup.ownerUid === uid);
+  }
+
+  // Owner gets 📋, the leader (most challenges completed) gets 👑 — both can
+  // land on the same person. "Leader" here is computed from currently-active
+  // challenges only (already-live data, no extra reads); see
+  // computeActiveLeaderUids() and the Leaderboard sheet's own all-time tally
+  // for the fuller picture.
+  function badgesForMember(uid, leaderUids){
+    const owner = isOwnerUid(uid) ? ' <span class="group-crown" title="Group owner">📋</span>' : '';
+    const leader = leaderUids.has(uid) ? ' <span class="group-crown" title="Leader — most challenges completed">👑</span>' : '';
+    return owner + leader;
+  }
+
+  // Ties count as co-leaders (all shown) rather than arbitrarily picking one.
+  // Empty set if nobody's completed anything in an active challenge yet.
+  function computeActiveLeaderUids(){
+    const counts = {};
+    activeChallenges.forEach(ch=>{
+      const entry = challengeCompletions[ch.id];
+      if(!entry) return;
+      Object.values(entry.byDate).flat().forEach(c=>{
+        counts[c.uid] = (counts[c.uid]||0)+1;
+      });
+    });
+    const max = Math.max(0, ...Object.values(counts));
+    if(max===0) return new Set();
+    return new Set(Object.keys(counts).filter(uid=>counts[uid]===max));
   }
 
   function firstName(name){ return (name||'Member').split(' ')[0]; }
@@ -1106,6 +1136,68 @@ import {
     }
   }
 
+  /* ---------------- leaderboard ---------------- */
+  // All-time tally across every challenge in the group (active + ended) —
+  // unlike the quick 👑 badges shown elsewhere (member chips, day sheet),
+  // which only look at currently-active challenges for cheapness, this
+  // sheet does the fuller fetch since it's opened deliberately rather than
+  // rendered constantly.
+  async function showLeaderboardSheet(){
+    if(!activeGroupId) return;
+    ui().openSheet('sheetLeaderboard');
+    const content = document.getElementById('leaderboardContent');
+    content.innerHTML = `<p class="text-sm text-muted">Loading…</p>`;
+
+    const counts = {};
+    const bump = (uid)=>{ counts[uid] = (counts[uid]||0)+1; };
+
+    activeChallenges.forEach(ch=>{
+      const entry = challengeCompletions[ch.id];
+      if(!entry) return;
+      Object.values(entry.byDate).flat().forEach(c=>bump(c.uid));
+    });
+
+    try{
+      const snap = await getDocs(collection(db, 'groups', activeGroupId, 'challenges'));
+      const today = todayISO();
+      const ended = snap.docs.map(d=>({id:d.id, ...d.data()})).filter(ch=>!ch.active || ch.endDate < today);
+      const endedUidLists = await Promise.all(ended.map(async ch=>{
+        const compSnap = await getDocs(collection(db, 'groups', activeGroupId, 'challenges', ch.id, 'completions'));
+        return compSnap.docs.map(d=>d.data().uid);
+      }));
+      endedUidLists.flat().forEach(bump);
+    }catch(e){
+      console.error('leaderboard history fetch failed', e);
+    }
+
+    // Include anyone with a completion even if they've since left the
+    // group (same fallback pattern as challenge history's tally).
+    const allUids = new Set([...activeMembers.map(m=>m.uid), ...Object.keys(counts)]);
+    const rows = Array.from(allUids).map(uid=>{
+      const m = activeMembers.find(x=>x.uid===uid);
+      return { uid, name: m ? m.displayName : 'Former member', color: m ? m.color : PALETTE[0], count: counts[uid]||0 };
+    }).sort((a,b)=>b.count-a.count);
+
+    if(rows.length===0){
+      content.innerHTML = `<p class="text-sm text-muted">No members yet.</p>`;
+      return;
+    }
+    const topCount = rows[0].count;
+
+    content.innerHTML = rows.map((r,i)=>{
+      const owner = isOwnerUid(r.uid) ? ' <span class="group-crown" title="Group owner">📋</span>' : '';
+      const leader = (topCount>0 && r.count===topCount) ? ' <span class="group-crown" title="Leader — most challenges completed">👑</span>' : '';
+      return `<div class="row" style="padding:8px 0; border-bottom:1px solid var(--border-soft);">
+        <div style="display:flex; align-items:center; gap:10px; min-width:0;">
+          <span class="text-sm text-faint" style="width:16px; flex-shrink:0;">${i+1}</span>
+          <span class="group-color-dot" style="background:${r.color};"></span>
+          <span>${escapeHtml(firstName(r.name))}${owner}${leader}</span>
+        </div>
+        <span class="text-sm text-muted" style="flex-shrink:0;">${r.count} check-in${r.count!==1?'s':''}</span>
+      </div>`;
+    }).join('');
+  }
+
   /* ---------------- challenge history ---------------- */
   // A closed-book view — fetched once per open (getDocs, not a live
   // listener) since ended challenges never change again. Falls back to the
@@ -1178,7 +1270,11 @@ import {
 
   async function showActivityFeedSheet(){
     if(!activeGroupId) return;
+    const mine = activeMembers.find(m=>m.uid===(currentUser||{}).uid);
+    const previousSeen = mine ? (mine.lastSeenReactionsAt||0) : 0;
+
     ui().openSheet('sheetActivityFeed');
+    document.getElementById('activityFeedBanner').innerHTML = '';
     const container = document.getElementById('activityFeedContent');
     container.innerHTML = `<p class="text-sm text-muted">Loading…</p>`;
 
@@ -1207,6 +1303,13 @@ import {
     items.sort((a,b)=>(b.completedAt||0)-(a.completedAt||0));
     activityFeedItems = items.slice(0, 40);
     renderActivityFeedList();
+
+    // Anything that happened while they were away — collected against the
+    // *old* lastSeenReactionsAt, before we mark everything seen below.
+    const congratsNames = collectCongratsNames(activityFeedItems, previousSeen);
+    if(congratsNames.length) showActivityCongratsBanner(congratsNames);
+
+    markReactionsSeenNow();
   }
 
   function renderActivityFeedList(){
@@ -1219,8 +1322,9 @@ import {
     container.innerHTML = activityFeedItems.map(item=>{
       const reactions = item.reactions || {};
       const counts = {};
-      Object.values(reactions).forEach(e=>{ counts[e] = (counts[e]||0)+1; });
-      const myReaction = currentUser ? reactions[currentUser.uid] : null;
+      Object.values(reactions).forEach(r=>{ counts[r.emoji] = (counts[r.emoji]||0)+1; });
+      const mineR = currentUser ? reactions[currentUser.uid] : null;
+      const myReaction = mineR ? mineR.emoji : null;
       return `<div class="card mb-12">
         <div style="display:flex; align-items:center; gap:8px;">
           <span class="group-color-dot" style="background:${item.color};"></span>
@@ -1251,22 +1355,119 @@ import {
   // completions listeners onto whatever's currently cached for the feed —
   // keeps reactions on active challenges' items live without any extra
   // Firestore reads. Ended-challenge items only refresh on next sheet-open.
+  // Also detects brand-new reactions landing on the current user's own
+  // check-ins (diffed against what was already cached, not a timestamp, so
+  // it only ever fires for genuinely new arrivals) and, if the Activity
+  // sheet is open right now, surfaces them as an in-page banner instead of
+  // waiting for the next time the sheet is opened.
   function syncActivityFeedFromActiveChallenges(){
-    if(activityFeedItems.length===0) return;
     let changed = false;
+    const liveCongrats = new Set();
     activeChallenges.forEach(ch=>{
       const entry = challengeCompletions[ch.id];
       if(!entry) return;
       Object.values(entry.byDate).flat().forEach(c=>{
         const completionId = `${c.date}_${c.uid}`;
         const idx = activityFeedItems.findIndex(i=>i.challengeId===ch.id && i.completionId===completionId);
-        if(idx>=0){
-          activityFeedItems[idx] = {...activityFeedItems[idx], ...c};
-          changed = true;
+        if(idx<0) return;
+        const old = activityFeedItems[idx];
+        if(currentUser && c.uid===currentUser.uid){
+          const oldReactions = old.reactions || {};
+          const newReactions = c.reactions || {};
+          Object.entries(newReactions).forEach(([uid,r])=>{
+            if(uid===currentUser.uid) return;
+            const oldR = oldReactions[uid];
+            if(!oldR || oldR.at !== r.at){
+              const m = activeMembers.find(x=>x.uid===uid);
+              liveCongrats.add(m ? firstName(m.displayName) : 'Someone');
+            }
+          });
+        }
+        activityFeedItems[idx] = {...old, ...c};
+        changed = true;
+      });
+    });
+
+    const sheetEl = document.getElementById('sheetActivityFeed');
+    const sheetOpen = sheetEl && sheetEl.classList.contains('open');
+    if(liveCongrats.size && sheetOpen){
+      showActivityCongratsBanner(Array.from(liveCongrats));
+      markReactionsSeenNow();
+    }
+    if(changed) renderActivityFeedList();
+    renderActivityBadge();
+  }
+
+  // Collects the first names of anyone who reacted to one of the current
+  // user's own check-ins after `sinceTs` — used both for the "while you
+  // were away" banner on opening the sheet, and could be reused elsewhere.
+  function collectCongratsNames(items, sinceTs){
+    if(!currentUser) return [];
+    const names = new Set();
+    items.forEach(item=>{
+      if(item.uid !== currentUser.uid) return;
+      const reactions = item.reactions || {};
+      Object.entries(reactions).forEach(([uid,r])=>{
+        if(uid===currentUser.uid) return;
+        if((r.at||0) > sinceTs){
+          const m = activeMembers.find(x=>x.uid===uid);
+          names.add(m ? firstName(m.displayName) : 'Someone');
         }
       });
     });
-    if(changed) renderActivityFeedList();
+    return Array.from(names);
+  }
+
+  function showActivityCongratsBanner(names){
+    const banner = document.getElementById('activityFeedBanner');
+    if(!banner) return;
+    const text = names.length===1 ? `${names[0]} congratulated you 🔥`
+      : names.length===2 ? `${names[0]} and ${names[1]} congratulated you 🔥`
+      : `${names.slice(0,-1).join(', ')}, and ${names[names.length-1]} congratulated you 🔥`;
+    banner.innerHTML = `<div class="activity-congrats-banner">${escapeHtml(text)}</div>`;
+    clearTimeout(banner._hideTimeout);
+    banner._hideTimeout = setTimeout(()=>{ banner.innerHTML = ''; }, 6000);
+  }
+
+  // Writes this user's "I've seen reactions up to now" marker onto their
+  // own member doc (already self-writable, no rule change needed) — synced
+  // across devices, unlike a purely local/localStorage flag would be.
+  async function markReactionsSeenNow(){
+    if(!currentUser || !activeGroupId) return;
+    const now = Date.now();
+    const mine = activeMembers.find(m=>m.uid===currentUser.uid);
+    if(mine) mine.lastSeenReactionsAt = now; // optimistic, so the badge clears immediately
+    renderActivityBadge();
+    try{
+      await updateDoc(doc(db, 'groups', activeGroupId, 'members', currentUser.uid), {lastSeenReactionsAt: now});
+    }catch(e){
+      console.error('could not mark reactions seen', e);
+    }
+  }
+
+  // Red dot on the Activity button — based on live data from active
+  // challenges only (the same data already in memory), so reactions on a
+  // long-ended challenge won't trigger it. A reasonable trade-off against
+  // adding more always-on listeners for something that's just a hint.
+  function hasUnseenReactions(){
+    if(!currentUser) return false;
+    const mine = activeMembers.find(m=>m.uid===currentUser.uid);
+    const lastSeen = mine ? (mine.lastSeenReactionsAt||0) : 0;
+    return activeChallenges.some(ch=>{
+      const entry = challengeCompletions[ch.id];
+      if(!entry) return false;
+      return Object.values(entry.byDate).flat().some(c=>{
+        if(c.uid !== currentUser.uid) return false;
+        const reactions = c.reactions || {};
+        return Object.entries(reactions).some(([uid,r])=>uid!==currentUser.uid && (r.at||0) > lastSeen);
+      });
+    });
+  }
+
+  function renderActivityBadge(){
+    const dot = document.getElementById('activityUnreadDot');
+    if(!dot) return;
+    dot.style.display = hasUnseenReactions() ? '' : 'none';
   }
 
   async function toggleReaction(challengeId, completionId, emoji){
@@ -1275,16 +1476,17 @@ import {
     if(!item) return;
     const reactions = {...(item.reactions||{})};
     const mine = reactions[currentUser.uid];
-    const removing = mine===emoji;
+    const removing = mine && mine.emoji===emoji;
+    const at = Date.now();
     if(removing) delete reactions[currentUser.uid];
-    else reactions[currentUser.uid] = emoji;
+    else reactions[currentUser.uid] = {emoji, at};
 
     item.reactions = reactions; // optimistic — feels instant, corrected on next fetch if the write below ever fails
     renderActivityFeedList();
 
     try{
       const ref = doc(db, 'groups', activeGroupId, 'challenges', challengeId, 'completions', completionId);
-      await updateDoc(ref, { [`reactions.${currentUser.uid}`]: removing ? deleteField() : emoji });
+      await updateDoc(ref, { [`reactions.${currentUser.uid}`]: removing ? deleteField() : {emoji, at} });
     }catch(e){
       console.error(e);
       toast('Could not save reaction');
@@ -1378,12 +1580,13 @@ import {
     if(activeMembers.length===0){
       list.innerHTML = `<p class="text-sm text-muted">No members yet.</p>`;
     } else {
+      const leaderUids = computeActiveLeaderUids();
       list.innerHTML = activeMembers.map(m=>{
         const done = completedUids.has(m.uid);
         return `<div class="row" style="padding:8px 0; border-bottom:1px solid var(--border-soft);">
           <div style="display:flex; align-items:center; gap:10px;">
             <span class="group-color-dot" style="background:${m.color}; opacity:${done?1:0.35};"></span>
-            <span style="${done?'':'color:var(--text-faint);'}">${escapeHtml(m.displayName)}${isOwnerUid(m.uid) ? ' <span class="group-crown" title="Group owner">👑</span>' : ''}</span>
+            <span style="${done?'':'color:var(--text-faint);'}">${escapeHtml(m.displayName)}${badgesForMember(m.uid, leaderUids)}</span>
           </div>
           <span style="${done?'color:var(--positive);':'color:var(--text-faint);'} font-size:13px;">${done?'✓ Done':'—'}</span>
         </div>`;
