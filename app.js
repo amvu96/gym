@@ -314,12 +314,20 @@ function renderTodayRoutineSuggestion(){
     .filter(t=>t.scheduledDays && t.scheduledDays.includes(todayIdx))
     .filter(t=>!dismissedTodayRoutines.has(t.id));
 
-  if(scheduled.length===0){
+  // Group challenges the person's group(s) have active today — sourced from
+  // groups.js, which owns the live Firestore listeners this needs. Shown in
+  // the same carousel as routine suggestions, visually distinguished (red)
+  // rather than as a separate section.
+  const groupCards = (window.GymGroups && window.GymGroups.getHomeChallengeCards)
+    ? window.GymGroups.getHomeChallengeCards() : [];
+
+  if(scheduled.length===0 && groupCards.length===0){
     wrap.style.display = 'none';
     return;
   }
 
   const alreadyLogged = state.sessions.some(s=>s.date===todayIso);
+  const totalSlides = scheduled.length + groupCards.length;
 
   wrap.style.display = 'block';
   wrap.innerHTML = `
@@ -347,9 +355,29 @@ function renderTodayRoutineSuggestion(){
           </div>
         </div>
       `).join('')}
+      ${groupCards.map(g=>`
+        <div class="today-routine-card group-challenge">
+          <div class="today-routine-label">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="7" r="4"/><path d="M2 21v-2a4 4 0 0 1 4-4h6a4 4 0 0 1 4 4v2"/><circle cx="17" cy="7" r="3"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/></svg>
+            Group challenge · ${escapeHtmlLocal(g.groupName)}
+          </div>
+          <div class="today-routine-header" data-open-group-challenge="${g.groupId}">
+            <div class="template-icon" style="color:var(--danger); border-color:var(--danger-dim); background:var(--danger-dim);">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+            </div>
+            <div class="today-routine-info">
+              <div class="today-routine-name">${escapeHtmlLocal(g.title)}</div>
+              <div class="today-routine-meta${g.doneToday?' done':''}">${g.doneToday ? '✓ Done today' : escapeHtmlLocal(g.targetLabel || 'Not done yet')}</div>
+            </div>
+            <div class="today-routine-chevron">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg>
+            </div>
+          </div>
+        </div>
+      `).join('')}
     </div>
-    ${scheduled.length>1 ? `<div class="routine-carousel-dots" id="todayRoutineDots">
-      ${scheduled.map((_,i)=>`<div class="routine-carousel-dot ${i===0?'active':''}" data-dot="${i}"></div>`).join('')}
+    ${totalSlides>1 ? `<div class="routine-carousel-dots" id="todayRoutineDots">
+      ${Array.from({length:totalSlides}).map((_,i)=>`<div class="routine-carousel-dot ${i===0?'active':''}" data-dot="${i}"></div>`).join('')}
     </div>` : ''}
   `;
 
@@ -365,8 +393,15 @@ function renderTodayRoutineSuggestion(){
       renderTodayRoutineSuggestion();
     });
   });
+  wrap.querySelectorAll('[data-open-group-challenge]').forEach(el=>{
+    el.addEventListener('click', ()=>{
+      if(window.GymGroups && window.GymGroups.openGroupFromHome){
+        window.GymGroups.openGroupFromHome(el.dataset.openGroupChallenge);
+      }
+    });
+  });
 
-  if(scheduled.length>1){
+  if(totalSlides>1){
     const carousel = document.getElementById('todayRoutineCarousel');
     const dotsWrap = document.getElementById('todayRoutineDots');
     carousel.onscroll = ()=>{
@@ -381,6 +416,13 @@ function renderTodayRoutineSuggestion(){
       }, 60);
     };
   }
+}
+
+// Minimal HTML-escape for text sourced from group data (group/challenge
+// names a group owner typed, not hardcoded template strings) before it's
+// interpolated into innerHTML.
+function escapeHtmlLocal(s){
+  return String(s||'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 }
 
 function renderTemplatesQuickRow(){
@@ -3890,7 +3932,13 @@ if(typeof window !== 'undefined'){
     showView,
     fmtDateISO,
     parseISO,
-    todayISO
+    todayISO,
+    // Lets groups.js ask for a home-screen repaint when its live challenge
+    // data changes, without needing to know app.js's internal view state —
+    // a no-op if the person isn't currently looking at Home.
+    refreshHomeChallengesIfVisible(){
+      if(currentView==='home') renderTodayRoutineSuggestion();
+    }
   };
 }
 
