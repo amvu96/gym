@@ -15,11 +15,11 @@
    groups/{groupId}/challenges/{challengeId}
      title, targetLabel, startDate, endDate, createdBy, createdAt, active
    groups/{groupId}/challenges/{challengeId}/completions/{date_uid}
-     uid, date, displayName, color, completedAt
+     uid, date, displayName, color, completedAt, reactions:{uid:emoji}
    ============================================================ */
 import {
   collection, doc, getDoc, getDocs, setDoc, addDoc, updateDoc, deleteDoc,
-  query, where, orderBy, onSnapshot, runTransaction, serverTimestamp, limit
+  query, where, orderBy, onSnapshot, runTransaction, serverTimestamp, limit, deleteField
 } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js";
 
 (function(){
@@ -42,14 +42,14 @@ import {
   let activeGroupId = null;
   let activeGroup = null;
   let activeMembers = []; // [{uid, displayName, color, ...}]
-  let activeChallenge = null;
+  let activeChallenges = []; // all currently-active (not-yet-ended) challenges for this group
+  let selectedCalendarChallengeId = null; // which active challenge the calendar below is showing
+  let challengeCompletions = {}; // challengeId -> {byDate:{date:[{uid,displayName,color,date}]}, seenKeys, notified, unsub}
   let membersUnsub = null;
   let challengeUnsub = null;
-  let completionsUnsub = null;
-  let completionsByDate = {}; // { 'YYYY-MM-DD': [{uid,displayName,color}, ...] }
   let calCursor = new Date();
-  let seenCompletionKeys = new Set(); // to only notify on genuinely new check-ins
-  let notifiedThisSession = false; // guards the initial snapshot burst
+  let selectedChallengeFreq = 'daily'; // working selection in the "New challenge" sheet
+  let activityFeedItems = []; // merged, cached feed for the currently-open group
 
   /* ---------------- small local date helpers (kept independent of app.js) ---------------- */
   function fmtISO(d){ return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
@@ -133,7 +133,8 @@ import {
     document.getElementById('groupsPanelDetail').style.display = '';
     document.getElementById('groupDetailName').textContent = activeGroup ? activeGroup.name : '—';
     renderMembersRow();
-    renderChallengeCard();
+    renderChallengesList();
+    renderCalendarChallengeSelector();
     renderGroupCalendar();
   }
 
@@ -260,7 +261,7 @@ import {
      screen they're on. Each group gets a cheap challenge listener plus,
      only while it has a live in-range challenge, a single-document listener
      on today's own completion doc (not the whole completions collection). */
-  let homeChallengeState = {}; // groupId -> {groupName, challenge, doneToday, challengeUnsub, completionUnsub}
+  let homeChallengeState = {}; // groupId -> {groupName, challengeUnsub, challenges: {challengeId: {challenge, doneToday, completionUnsub}}}
 
   function syncHomeChallengeListeners(){
     const currentIds = new Set(myGroups.map(g=>g.id));
@@ -272,7 +273,7 @@ import {
     });
     myGroups.forEach(g=>{
       if(!homeChallengeState[g.id]){
-        homeChallengeState[g.id] = {groupName:g.name, challenge:null, doneToday:false, challengeUnsub:null, completionUnsub:null};
+        homeChallengeState[g.id] = {groupName:g.name, challengeUnsub:null, challenges:{}};
         attachHomeChallengeListener(g.id);
       } else {
         homeChallengeState[g.id].groupName = g.name;
@@ -285,37 +286,52 @@ import {
     const entry = homeChallengeState[groupId];
     if(!entry) return;
     if(entry.challengeUnsub) entry.challengeUnsub();
-    if(entry.completionUnsub) entry.completionUnsub();
+    Object.values(entry.challenges).forEach(c=>{ if(c.completionUnsub) c.completionUnsub(); });
   }
 
+  // Tracks every active, in-range challenge for a group (not just one) —
+  // each gets its own single-document listener on today's completion doc
+  // (cheap: one doc, not the whole collection, since Home only needs
+  // "done today", unlike the group-detail cards which also need period
+  // totals for weekly/monthly challenges).
   function attachHomeChallengeListener(groupId){
-    const q = query(collection(db, 'groups', groupId, 'challenges'), where('active','==',true), limit(1));
+    const q = query(collection(db, 'groups', groupId, 'challenges'), where('active','==',true));
     const unsub = onSnapshot(q, (snap)=>{
       const entry = homeChallengeState[groupId];
       if(!entry) return; // group was left/torn down mid-flight
-      if(entry.completionUnsub){ entry.completionUnsub(); entry.completionUnsub = null; }
 
-      if(snap.empty){
-        entry.challenge = null;
-        notifyHomeRefresh();
-        return;
-      }
-      const ch = {id:snap.docs[0].id, ...snap.docs[0].data()};
       const today = todayISO();
-      if(today < ch.startDate || today > ch.endDate){
-        entry.challenge = null;
-        notifyHomeRefresh();
-        return;
-      }
-      entry.challenge = ch;
-      entry.doneToday = false;
-      notifyHomeRefresh();
+      const newChallenges = snap.docs
+        .map(d=>({id:d.id, ...d.data()}))
+        .filter(ch=>today >= ch.startDate && today <= ch.endDate);
+      const newIds = new Set(newChallenges.map(c=>c.id));
 
-      const compRef = doc(db, 'groups', groupId, 'challenges', ch.id, 'completions', `${today}_${currentUser.uid}`);
-      entry.completionUnsub = onSnapshot(compRef, (compSnap)=>{
-        entry.doneToday = compSnap.exists();
-        notifyHomeRefresh();
-      }, (err)=>console.error('home completion listen failed', err));
+      // Drop tracking (and its completion listener) for anything no longer
+      // active/in-range.
+      Object.keys(entry.challenges).forEach(cid=>{
+        if(!newIds.has(cid)){
+          if(entry.challenges[cid].completionUnsub) entry.challenges[cid].completionUnsub();
+          delete entry.challenges[cid];
+        }
+      });
+
+      newChallenges.forEach(ch=>{
+        if(entry.challenges[ch.id]){
+          entry.challenges[ch.id].challenge = ch; // refresh in case title/target edited later
+          return;
+        }
+        const compRef = doc(db, 'groups', groupId, 'challenges', ch.id, 'completions', `${today}_${currentUser.uid}`);
+        entry.challenges[ch.id] = {
+          challenge: ch, doneToday: false,
+          completionUnsub: onSnapshot(compRef, (compSnap)=>{
+            if(!entry.challenges[ch.id]) return;
+            entry.challenges[ch.id].doneToday = compSnap.exists();
+            notifyHomeRefresh();
+          }, (err)=>console.error('home completion listen failed', err))
+        };
+      });
+
+      notifyHomeRefresh();
     }, (err)=>console.error('home challenge listen failed', err));
     homeChallengeState[groupId].challengeUnsub = unsub;
   }
@@ -330,18 +346,24 @@ import {
   }
 
   // Called by app.js's home-screen carousel to get this user's active,
-  // in-range group challenges. Pure data — app.js owns the actual markup so
-  // group cards render identically to routine cards, just re-themed.
+  // in-range group challenges — now one card per (group, challenge) pair,
+  // since a group can have several running at once. Pure data — app.js owns
+  // the actual markup so group cards render identically to routine cards.
   function getHomeChallengeCards(){
-    return Object.entries(homeChallengeState)
-      .filter(([,e])=>e.challenge)
-      .map(([groupId,e])=>({
-        groupId,
-        groupName: e.groupName,
-        title: e.challenge.title,
-        targetLabel: e.challenge.targetLabel,
-        doneToday: !!e.doneToday
-      }));
+    const cards = [];
+    Object.entries(homeChallengeState).forEach(([groupId,e])=>{
+      Object.values(e.challenges).forEach(c=>{
+        cards.push({
+          groupId,
+          groupName: e.groupName,
+          challengeId: c.challenge.id,
+          title: c.challenge.title,
+          targetLabel: c.challenge.targetLabel,
+          doneToday: !!c.doneToday
+        });
+      });
+    });
+    return cards;
   }
 
   // Called when a home-screen group-challenge card is tapped — switches to
@@ -426,6 +448,10 @@ import {
     document.getElementById('btnNewChallenge').addEventListener('click', ()=>{
       document.getElementById('challengeTitleInput').value = '';
       document.getElementById('challengeTargetInput').value = '';
+      document.getElementById('challengeFreqCountInput').value = 3;
+      selectedChallengeFreq = 'daily';
+      document.querySelectorAll('.challenge-freq-chip').forEach(c=>c.classList.toggle('selected', c.dataset.freq==='daily'));
+      document.getElementById('challengeFreqCountField').style.display = 'none';
       const t = new Date();
       document.getElementById('challengeStartInput').value = fmtISO(t);
       const end = new Date(t); end.setDate(end.getDate()+29);
@@ -433,8 +459,23 @@ import {
       ui().openSheet('sheetNewChallenge');
     });
     document.getElementById('btnConfirmNewChallenge').addEventListener('click', createChallenge);
+    document.querySelectorAll('.challenge-freq-chip').forEach(chip=>{
+      chip.addEventListener('click', ()=>{
+        selectedChallengeFreq = chip.dataset.freq;
+        document.querySelectorAll('.challenge-freq-chip').forEach(c=>c.classList.toggle('selected', c===chip));
+        const countField = document.getElementById('challengeFreqCountField');
+        const countLabel = document.getElementById('challengeFreqCountLabel');
+        if(selectedChallengeFreq==='daily'){
+          countField.style.display = 'none';
+        } else {
+          countField.style.display = '';
+          countLabel.textContent = selectedChallengeFreq==='weekly' ? 'Times per week' : 'Times per month';
+        }
+      });
+    });
 
-    document.getElementById('btnMarkDoneToday').addEventListener('click', markTodayDone);
+    document.getElementById('btnChallengeHistory').addEventListener('click', showChallengeHistorySheet);
+    document.getElementById('btnActivityFeed').addEventListener('click', showActivityFeedSheet);
 
     document.getElementById('calGroupPrevMonth').addEventListener('click', ()=>{
       calCursor.setMonth(calCursor.getMonth()-1); renderGroupCalendar();
@@ -744,10 +785,8 @@ import {
     document.getElementById('groupsPanelDetail').style.display = '';
     document.getElementById('groupDetailName').textContent = 'Loading…';
     document.getElementById('groupMembersRow').innerHTML = '';
-    document.getElementById('groupChallengeCard').innerHTML = '';
+    document.getElementById('groupChallengesList').innerHTML = '';
     document.getElementById('calGroupGrid').innerHTML = '';
-    seenCompletionKeys = new Set();
-    notifiedThisSession = false;
 
     const gSnap = await getDoc(doc(db, 'groups', groupId));
     if(!gSnap.exists()){ toast('Group not found'); closeGroup(); return; }
@@ -763,19 +802,21 @@ import {
       healOwnMemberDoc();
     });
 
-    listenToActiveChallenge();
+    listenToActiveChallenges();
   }
 
   function teardownDetailListeners(){
     if(membersUnsub){ membersUnsub(); membersUnsub = null; }
     if(challengeUnsub){ challengeUnsub(); challengeUnsub = null; }
-    if(completionsUnsub){ completionsUnsub(); completionsUnsub = null; }
+    Object.values(challengeCompletions).forEach(entry=>{ if(entry.unsub) entry.unsub(); });
+    challengeCompletions = {};
   }
 
   function closeGroup(){
     teardownDetailListeners();
-    activeGroupId = null; activeGroup = null; activeMembers = []; activeChallenge = null;
-    completionsByDate = {};
+    activeGroupId = null; activeGroup = null; activeMembers = []; activeChallenges = [];
+    selectedCalendarChallengeId = null;
+    activityFeedItems = [];
     renderRoot();
   }
 
@@ -815,52 +856,160 @@ import {
     }catch(e){ console.error('member doc heal failed', e); }
   }
 
-  function listenToActiveChallenge(){
-    const q = query(
-      collection(db, 'groups', activeGroupId, 'challenges'),
-      where('active', '==', true), limit(1)
-    );
+  function listenToActiveChallenges(){
+    const q = query(collection(db, 'groups', activeGroupId, 'challenges'), where('active', '==', true));
     challengeUnsub = onSnapshot(q, (snap)=>{
-      if(snap.empty){
-        activeChallenge = null;
-        renderChallengeCard();
-        if(completionsUnsub){ completionsUnsub(); completionsUnsub = null; }
-        completionsByDate = {};
-        renderGroupCalendar();
-        return;
+      const newList = snap.docs.map(d=>({id:d.id, ...d.data()})).sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
+      const newIds = new Set(newList.map(c=>c.id));
+
+      // Tear down completions listeners for challenges that dropped out of
+      // the active set (owner ended them) so we don't leak listeners.
+      Object.keys(challengeCompletions).forEach(cid=>{
+        if(!newIds.has(cid)){
+          if(challengeCompletions[cid].unsub) challengeCompletions[cid].unsub();
+          delete challengeCompletions[cid];
+        }
+      });
+
+      activeChallenges = newList;
+      newList.forEach(ch=>{
+        if(!challengeCompletions[ch.id]) attachChallengeCompletionsListener(ch.id);
+      });
+
+      // Keep the calendar's selected challenge pointing at something real —
+      // default to the newest active challenge the first time, or if the
+      // one that was selected just got ended.
+      if(!selectedCalendarChallengeId || !newIds.has(selectedCalendarChallengeId)){
+        selectedCalendarChallengeId = newList.length ? newList[0].id : null;
       }
-      const chDoc = snap.docs[0];
-      activeChallenge = {id:chDoc.id, ...chDoc.data()};
-      renderChallengeCard();
-      listenToCompletions();
-    }, (err)=>console.error('challenge listen failed', err));
+
+      renderChallengesList();
+      renderCalendarChallengeSelector();
+      renderGroupCalendar();
+    }, (err)=>console.error('challenges listen failed', err));
   }
 
-  function renderChallengeCard(){
-    const card = document.getElementById('groupChallengeCard');
+  // One live listener per active challenge, on its full completions
+  // collection (not just "today") — needed to compute weekly/monthly
+  // period progress (e.g. "2/3 this week"), not just a single day's status.
+  // Collections here are small (one group, a handful of members, one
+  // challenge's lifetime) so this is cheap even listened to in full.
+  function attachChallengeCompletionsListener(challengeId){
+    challengeCompletions[challengeId] = {byDate:{}, seenKeys:new Set(), notified:false, unsub:null};
+    const ref = collection(db, 'groups', activeGroupId, 'challenges', challengeId, 'completions');
+    challengeCompletions[challengeId].unsub = onSnapshot(ref, (snap)=>{
+      const entry = challengeCompletions[challengeId];
+      if(!entry) return; // challenge was ended/torn down mid-flight
+
+      const byDate = {};
+      const currentKeys = new Set();
+      snap.forEach(d=>{
+        const c = d.data();
+        currentKeys.add(d.id);
+        (byDate[c.date] = byDate[c.date] || []).push(c);
+      });
+      entry.byDate = byDate;
+
+      // Notify (foreground toast + Notification) about any check-in that's
+      // new since the last snapshot and isn't the current user's own —
+      // skipped on the very first snapshot after attaching so opening the
+      // group doesn't fire a backlog of "notifications" for history.
+      if(entry.notified){
+        currentKeys.forEach(key=>{
+          if(entry.seenKeys.has(key)) return;
+          const cdoc = snap.docs.find(d=>d.id===key);
+          if(!cdoc) return;
+          const c = cdoc.data();
+          if(c.uid !== currentUser.uid) notifyTeammateCompletion(c);
+        });
+      }
+      entry.seenKeys = currentKeys;
+      entry.notified = true;
+
+      renderChallengesList();
+      if(challengeId===selectedCalendarChallengeId) renderGroupCalendar();
+      syncActivityFeedFromActiveChallenges();
+    }, (err)=>console.error('completions listen failed', err));
+  }
+
+  // Computes this user's progress for a challenge given its frequency —
+  // "done today" for daily, "N/target this week|month" for weekly/monthly,
+  // counting distinct completed dates within the current period.
+  function computeChallengeProgress(ch, byDate){
+    const today = todayISO();
+    const myDates = Object.entries(byDate)
+      .filter(([,list])=>list.some(c=>c.uid===currentUser.uid))
+      .map(([date])=>date);
+    const doneToday = myDates.includes(today);
+
+    if(ch.frequency==='weekly' || ch.frequency==='monthly'){
+      const now = new Date();
+      const periodStart = ch.frequency==='weekly' ? mondayOfWeek(now) : new Date(now.getFullYear(), now.getMonth(), 1);
+      const periodStartIso = fmtISO(periodStart);
+      const periodCount = myDates.filter(d=>d>=periodStartIso && d<=today).length;
+      const periodTarget = ch.frequencyCount || 1;
+      return {
+        doneToday, periodCount, periodTarget,
+        periodLabel: ch.frequency==='weekly' ? 'this week' : 'this month',
+        metTarget: periodCount>=periodTarget
+      };
+    }
+    return {doneToday, periodCount: doneToday?1:0, periodTarget:1, periodLabel:'today', metTarget:doneToday};
+  }
+
+  function mondayOfWeek(d){
+    const day = (d.getDay()+6)%7; // 0=Mon, matching the app's convention elsewhere
+    const monday = new Date(d);
+    monday.setDate(d.getDate()-day);
+    monday.setHours(0,0,0,0);
+    return monday;
+  }
+
+  function renderChallengesList(){
+    const container = document.getElementById('groupChallengesList');
     const isOwner = activeGroup && currentUser && activeGroup.ownerUid===currentUser.uid;
-    if(!activeChallenge){
-      card.innerHTML = `<div class="card" style="margin-bottom:16px;">
-        <p class="text-sm text-muted mb-12">No active challenge yet.</p>
+    document.getElementById('btnNewChallenge').style.display = isOwner ? '' : 'none';
+
+    if(activeChallenges.length===0){
+      container.innerHTML = `<div class="card mb-16">
+        <p class="text-sm text-muted mb-4">No active challenges yet.</p>
         ${isOwner ? '' : '<p class="text-sm text-faint">Waiting on the group owner to set one.</p>'}
       </div>`;
-      document.getElementById('btnNewChallenge').style.display = isOwner ? '' : 'none';
-      document.getElementById('btnMarkDoneToday').style.display = 'none';
       return;
     }
-    document.getElementById('btnNewChallenge').style.display = isOwner ? '' : 'none';
-    const today = todayISO();
-    const inRange = today >= activeChallenge.startDate && today <= activeChallenge.endDate;
-    const doneToday = (completionsByDate[today]||[]).some(c=>c.uid===currentUser.uid);
-    card.innerHTML = `<div class="card" style="margin-bottom:16px;">
-      <div class="settings-row-label">${escapeHtml(activeChallenge.title)}</div>
-      ${activeChallenge.targetLabel ? `<div class="text-sm text-muted">${escapeHtml(activeChallenge.targetLabel)}</div>` : ''}
-      <div class="text-sm text-faint mt-4">${fmtRange(activeChallenge.startDate, activeChallenge.endDate)}</div>
-    </div>`;
-    const btn = document.getElementById('btnMarkDoneToday');
-    btn.style.display = inRange ? '' : 'none';
-    btn.disabled = doneToday;
-    btn.textContent = doneToday ? '✓ Done for today' : 'Mark today done';
+
+    container.innerHTML = activeChallenges.map(ch=>{
+      const entry = challengeCompletions[ch.id];
+      const byDate = entry ? entry.byDate : {};
+      const progress = computeChallengeProgress(ch, byDate);
+      const today = todayISO();
+      const inRange = today >= ch.startDate && today <= ch.endDate;
+      const isPastEnd = today > ch.endDate;
+      const freqLabel = ch.frequency==='weekly' ? `${ch.frequencyCount||1}x per week`
+        : ch.frequency==='monthly' ? `${ch.frequencyCount||1}x per month`
+        : 'Daily';
+      const progressText = ch.frequency==='daily'
+        ? (progress.doneToday ? '✓ Done today' : 'Not done today')
+        : `${progress.periodCount}/${progress.periodTarget} ${progress.periodLabel}${progress.metTarget?' ✓':''}`;
+
+      return `<div class="card mb-12">
+        <div class="settings-row-label">${escapeHtml(ch.title)}</div>
+        ${ch.targetLabel ? `<div class="text-sm text-muted">${escapeHtml(ch.targetLabel)}</div>` : ''}
+        <div class="text-sm text-faint mt-4">${freqLabel} · ${fmtRange(ch.startDate, ch.endDate)}${isPastEnd?' · Ended':''}</div>
+        <div class="text-sm mt-8" style="color:${progress.metTarget?'var(--positive)':'var(--text-muted)'};">${progressText}</div>
+        <div class="quick-actions mt-12" style="margin-bottom:0;">
+          ${inRange ? `<button class="btn btn-primary btn-sm" style="flex:1;" data-mark-done="${ch.id}" ${progress.doneToday?'disabled':''}>${progress.doneToday?'✓ Done for today':'Mark today done'}</button>` : ''}
+          ${isOwner ? `<button class="btn btn-secondary btn-sm" data-end-challenge="${ch.id}">End</button>` : ''}
+        </div>
+      </div>`;
+    }).join('');
+
+    container.querySelectorAll('[data-mark-done]').forEach(btn=>{
+      btn.addEventListener('click', ()=>markChallengeDone(btn.dataset.markDone));
+    });
+    container.querySelectorAll('[data-end-challenge]').forEach(btn=>{
+      btn.addEventListener('click', ()=>endChallenge(btn.dataset.endChallenge));
+    });
   }
 
   function fmtRange(startIso, endIso){
@@ -873,18 +1022,15 @@ import {
     const targetLabel = document.getElementById('challengeTargetInput').value.trim();
     const startDate = document.getElementById('challengeStartInput').value;
     const endDate = document.getElementById('challengeEndInput').value;
+    const frequency = selectedChallengeFreq;
+    const frequencyCount = frequency==='daily' ? 1 : Math.max(1, +document.getElementById('challengeFreqCountInput').value || 1);
     if(!title){ toast('Give the challenge a name'); return; }
     if(!startDate || !endDate || startDate > endDate){ toast('Check the challenge dates'); return; }
     try{
-      // Deactivate any currently-active challenge, then create the new one —
-      // one active challenge per group at a time keeps the calendar/completions
-      // model simple (a completion always belongs to an unambiguous challenge).
-      const existingQ = query(collection(db, 'groups', activeGroupId, 'challenges'), where('active','==',true));
-      const existingSnap = await getDocs(existingQ);
-      await Promise.all(existingSnap.docs.map(d=>updateDoc(d.ref, {active:false})));
-
+      // No longer deactivates other challenges — multiple can run at once,
+      // each with its own independent completions and calendar view.
       await addDoc(collection(db, 'groups', activeGroupId, 'challenges'), {
-        title, targetLabel, startDate, endDate,
+        title, targetLabel, startDate, endDate, frequency, frequencyCount,
         createdBy: currentUser.uid, createdAt: Date.now(), active: true
       });
       ui().closeSheet('sheetNewChallenge');
@@ -902,39 +1048,23 @@ import {
     }
   }
 
-  /* ---------------- completions + calendar ---------------- */
-  function listenToCompletions(){
-    if(completionsUnsub){ completionsUnsub(); completionsUnsub = null; }
-    const ref = collection(db, 'groups', activeGroupId, 'challenges', activeChallenge.id, 'completions');
-    completionsUnsub = onSnapshot(ref, (snap)=>{
-      const byDate = {};
-      const currentKeys = new Set();
-      snap.forEach(d=>{
-        const c = d.data();
-        currentKeys.add(d.id);
-        (byDate[c.date] = byDate[c.date] || []).push(c);
-      });
-      completionsByDate = byDate;
-
-      // Notify (foreground toast + Notification) about any check-in that's
-      // new since the last snapshot and isn't the current user's own —
-      // skipped on the very first snapshot after opening the group so
-      // opening it doesn't fire a backlog of "notifications" for history.
-      if(notifiedThisSession){
-        currentKeys.forEach(key=>{
-          if(seenCompletionKeys.has(key)) return;
-          const c = snap.docs.find(d=>d.id===key).data();
-          if(c.uid !== currentUser.uid){
-            notifyTeammateCompletion(c);
-          }
-        });
-      }
-      seenCompletionKeys = currentKeys;
-      notifiedThisSession = true;
-
-      renderChallengeCard();
-      renderGroupCalendar();
-    }, (err)=>console.error('completions listen failed', err));
+  // Owner-only: moves a challenge out of the active set (and into history)
+  // without deleting its data — members immediately lose the ability to
+  // mark it done, but the calendar/tally stay intact for the history view.
+  async function endChallenge(challengeId){
+    const ch = activeChallenges.find(c=>c.id===challengeId);
+    if(!ch) return;
+    const ok = ui().confirmDialog ? await ui().confirmDialog({
+      title:'End this challenge?', message:`"${ch.title}" will move to history. Members can no longer mark it done.`, confirmLabel:'End challenge', danger:false
+    }) : confirm(`End "${ch.title}"?`);
+    if(!ok) return;
+    try{
+      await updateDoc(doc(db, 'groups', activeGroupId, 'challenges', challengeId), {active:false, endedAt: Date.now()});
+      toast('Challenge ended');
+    }catch(e){
+      console.error(e);
+      toast('Could not end challenge');
+    }
   }
 
   function notifyTeammateCompletion(c){
@@ -949,12 +1079,13 @@ import {
     }catch(e){ /* notifications are a nice-to-have here, never fatal */ }
   }
 
-  async function markTodayDone(){
-    if(!activeChallenge || !currentUser) return;
+  async function markChallengeDone(challengeId){
+    const ch = activeChallenges.find(c=>c.id===challengeId);
+    if(!ch || !currentUser) return;
     const date = todayISO();
     const id = `${date}_${currentUser.uid}`;
     try{
-      await setDoc(doc(db, 'groups', activeGroupId, 'challenges', activeChallenge.id, 'completions', id), {
+      await setDoc(doc(db, 'groups', activeGroupId, 'challenges', challengeId, 'completions', id), {
         uid: currentUser.uid,
         date,
         displayName: currentUser.name || 'Member',
@@ -965,7 +1096,7 @@ import {
       if(activeGroup && activeGroup.ntfyTopic){
         publishNtfy(activeGroup.ntfyTopic, {
           title: activeGroup.name,
-          message: `${firstName(currentUser.name)} completed today's challenge: ${activeChallenge.title}`,
+          message: `${firstName(currentUser.name)} completed today's challenge: ${ch.title}`,
           tags: ['fire']
         });
       }
@@ -973,6 +1104,223 @@ import {
       console.error(e);
       toast('Could not save — try again');
     }
+  }
+
+  /* ---------------- challenge history ---------------- */
+  // A closed-book view — fetched once per open (getDocs, not a live
+  // listener) since ended challenges never change again. Falls back to the
+  // displayName/color stored on each completion for anyone no longer in
+  // activeMembers (e.g. they've since left the group), so the tally still
+  // shows who they were rather than silently dropping their check-ins.
+  async function showChallengeHistorySheet(){
+    if(!activeGroupId) return;
+    ui().openSheet('sheetChallengeHistory');
+    const content = document.getElementById('challengeHistoryContent');
+    content.innerHTML = `<p class="text-sm text-muted">Loading…</p>`;
+    try{
+      const snap = await getDocs(collection(db, 'groups', activeGroupId, 'challenges'));
+      const today = todayISO();
+      const ended = snap.docs
+        .map(d=>({id:d.id, ...d.data()}))
+        .filter(ch=>!ch.active || ch.endDate < today)
+        .sort((a,b)=>(b.endedAt||b.createdAt||0)-(a.endedAt||a.createdAt||0));
+
+      if(ended.length===0){
+        content.innerHTML = `<p class="text-sm text-muted">No past challenges yet.</p>`;
+        return;
+      }
+
+      const cards = await Promise.all(ended.map(async ch=>{
+        const compSnap = await getDocs(collection(db, 'groups', activeGroupId, 'challenges', ch.id, 'completions'));
+        const countByUid = {}, nameByUid = {}, colorByUid = {};
+        compSnap.forEach(d=>{
+          const c = d.data();
+          countByUid[c.uid] = (countByUid[c.uid]||0)+1;
+          nameByUid[c.uid] = c.displayName;
+          colorByUid[c.uid] = c.color;
+        });
+        const allUids = new Set([...activeMembers.map(m=>m.uid), ...Object.keys(countByUid)]);
+        const tally = Array.from(allUids).map(uid=>{
+          const m = activeMembers.find(x=>x.uid===uid);
+          return {
+            name: firstName(m ? m.displayName : (nameByUid[uid]||'Member')),
+            color: m ? m.color : (colorByUid[uid]||PALETTE[0]),
+            count: countByUid[uid]||0
+          };
+        }).sort((a,b)=>b.count-a.count);
+        const freqLabel = ch.frequency==='weekly' ? `${ch.frequencyCount||1}x/week` : ch.frequency==='monthly' ? `${ch.frequencyCount||1}x/month` : 'Daily';
+
+        return `<div class="card mb-12">
+          <div class="settings-row-label">${escapeHtml(ch.title)}</div>
+          <div class="text-sm text-faint mb-8">${freqLabel} · ${fmtRange(ch.startDate, ch.endDate)}</div>
+          ${tally.map(t=>`<div class="row" style="padding:4px 0;">
+            <div style="display:flex; align-items:center; gap:8px;"><span class="group-color-dot" style="background:${t.color};"></span>${escapeHtml(t.name)}</div>
+            <span class="text-sm text-muted">${t.count} check-in${t.count!==1?'s':''}</span>
+          </div>`).join('')}
+        </div>`;
+      }));
+      content.innerHTML = cards.join('');
+    }catch(e){
+      console.error(e);
+      content.innerHTML = `<p class="text-sm text-muted">Could not load history.</p>`;
+    }
+  }
+
+  /* ---------------- activity feed (reactions) ----------------
+     A reverse-chronological feed of check-ins across every challenge in
+     the group — active ones read live from the same data the challenge
+     cards already listen to (no extra Firestore reads), ended ones are
+     fetched once per sheet-open the same way challenge history is (a
+     closed book — nothing there changes on its own). Each item carries a
+     small emoji-reaction bar; reactions live in a `reactions: {uid:emoji}`
+     map on the completion doc itself. */
+  const REACTION_EMOJI = ['👍','🔥','💪','🎉','👏'];
+
+  async function showActivityFeedSheet(){
+    if(!activeGroupId) return;
+    ui().openSheet('sheetActivityFeed');
+    const container = document.getElementById('activityFeedContent');
+    container.innerHTML = `<p class="text-sm text-muted">Loading…</p>`;
+
+    const items = [];
+    activeChallenges.forEach(ch=>{
+      const entry = challengeCompletions[ch.id];
+      if(!entry) return;
+      Object.values(entry.byDate).flat().forEach(c=>{
+        items.push({...c, challengeId: ch.id, challengeTitle: ch.title, completionId: `${c.date}_${c.uid}`});
+      });
+    });
+
+    try{
+      const snap = await getDocs(collection(db, 'groups', activeGroupId, 'challenges'));
+      const today = todayISO();
+      const ended = snap.docs.map(d=>({id:d.id, ...d.data()})).filter(ch=>!ch.active || ch.endDate < today);
+      const endedGroups = await Promise.all(ended.map(async ch=>{
+        const compSnap = await getDocs(collection(db, 'groups', activeGroupId, 'challenges', ch.id, 'completions'));
+        return compSnap.docs.map(d=>({...d.data(), challengeId: ch.id, challengeTitle: ch.title, completionId: d.id}));
+      }));
+      endedGroups.forEach(list=>items.push(...list));
+    }catch(e){
+      console.error('activity feed history fetch failed', e);
+    }
+
+    items.sort((a,b)=>(b.completedAt||0)-(a.completedAt||0));
+    activityFeedItems = items.slice(0, 40);
+    renderActivityFeedList();
+  }
+
+  function renderActivityFeedList(){
+    const container = document.getElementById('activityFeedContent');
+    if(!container) return;
+    if(activityFeedItems.length===0){
+      container.innerHTML = `<p class="text-sm text-muted">No check-ins yet.</p>`;
+      return;
+    }
+    container.innerHTML = activityFeedItems.map(item=>{
+      const reactions = item.reactions || {};
+      const counts = {};
+      Object.values(reactions).forEach(e=>{ counts[e] = (counts[e]||0)+1; });
+      const myReaction = currentUser ? reactions[currentUser.uid] : null;
+      return `<div class="card mb-12">
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span class="group-color-dot" style="background:${item.color};"></span>
+          <div style="min-width:0;">
+            <div class="text-sm" style="font-weight:600;">${escapeHtml(firstName(item.displayName))} <span style="font-weight:400; color:var(--text-muted);">completed</span> ${escapeHtml(item.challengeTitle)}</div>
+            <div class="text-sm text-faint">${relativeTime(item.completedAt)}</div>
+          </div>
+        </div>
+        <div class="activity-reaction-row mt-8">
+          ${REACTION_EMOJI.map(e=>`
+            <button type="button" class="activity-reaction-btn ${myReaction===e?'active':''}" data-react="${item.challengeId}|${item.completionId}|${e}">
+              ${e}${counts[e]?`<span class="activity-reaction-count">${counts[e]}</span>`:''}
+            </button>
+          `).join('')}
+        </div>
+      </div>`;
+    }).join('');
+
+    container.querySelectorAll('[data-react]').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        const [challengeId, completionId, emoji] = btn.dataset.react.split('|');
+        toggleReaction(challengeId, completionId, emoji);
+      });
+    });
+  }
+
+  // Applies live updates from the already-subscribed active-challenge
+  // completions listeners onto whatever's currently cached for the feed —
+  // keeps reactions on active challenges' items live without any extra
+  // Firestore reads. Ended-challenge items only refresh on next sheet-open.
+  function syncActivityFeedFromActiveChallenges(){
+    if(activityFeedItems.length===0) return;
+    let changed = false;
+    activeChallenges.forEach(ch=>{
+      const entry = challengeCompletions[ch.id];
+      if(!entry) return;
+      Object.values(entry.byDate).flat().forEach(c=>{
+        const completionId = `${c.date}_${c.uid}`;
+        const idx = activityFeedItems.findIndex(i=>i.challengeId===ch.id && i.completionId===completionId);
+        if(idx>=0){
+          activityFeedItems[idx] = {...activityFeedItems[idx], ...c};
+          changed = true;
+        }
+      });
+    });
+    if(changed) renderActivityFeedList();
+  }
+
+  async function toggleReaction(challengeId, completionId, emoji){
+    if(!currentUser) return;
+    const item = activityFeedItems.find(i=>i.challengeId===challengeId && i.completionId===completionId);
+    if(!item) return;
+    const reactions = {...(item.reactions||{})};
+    const mine = reactions[currentUser.uid];
+    const removing = mine===emoji;
+    if(removing) delete reactions[currentUser.uid];
+    else reactions[currentUser.uid] = emoji;
+
+    item.reactions = reactions; // optimistic — feels instant, corrected on next fetch if the write below ever fails
+    renderActivityFeedList();
+
+    try{
+      const ref = doc(db, 'groups', activeGroupId, 'challenges', challengeId, 'completions', completionId);
+      await updateDoc(ref, { [`reactions.${currentUser.uid}`]: removing ? deleteField() : emoji });
+    }catch(e){
+      console.error(e);
+      toast('Could not save reaction');
+    }
+  }
+
+  function relativeTime(ts){
+    if(!ts) return '';
+    const mins = Math.floor((Date.now()-ts)/60000);
+    if(mins<1) return 'just now';
+    if(mins<60) return `${mins}m ago`;
+    const hrs = Math.floor(mins/60);
+    if(hrs<24) return `${hrs}h ago`;
+    const days = Math.floor(hrs/24);
+    if(days<7) return `${days}d ago`;
+    return new Date(ts).toLocaleDateString(undefined,{month:'short', day:'numeric'});
+  }
+
+  /* ---------------- completions + calendar ---------------- */
+  function renderCalendarChallengeSelector(){
+    const wrap = document.getElementById('calChallengeSelector');
+    if(activeChallenges.length<=1){
+      wrap.style.display = 'none';
+      return;
+    }
+    wrap.style.display = '';
+    wrap.innerHTML = activeChallenges.map(ch=>`
+      <button type="button" class="btn btn-secondary btn-sm challenge-freq-chip ${ch.id===selectedCalendarChallengeId?'selected':''}" data-cal-challenge="${ch.id}" style="white-space:nowrap;">${escapeHtml(ch.title)}</button>
+    `).join('');
+    wrap.querySelectorAll('[data-cal-challenge]').forEach(btn=>{
+      btn.addEventListener('click', ()=>{
+        selectedCalendarChallengeId = btn.dataset.calChallenge;
+        renderCalendarChallengeSelector();
+        renderGroupCalendar();
+      });
+    });
   }
 
   function renderGroupCalendar(){
@@ -988,6 +1336,7 @@ import {
     const startOffset = (firstDay.getDay()+6)%7;
     const daysInMonth = new Date(year, month+1, 0).getDate();
     const today = new Date();
+    const byDate = (challengeCompletions[selectedCalendarChallengeId] || {}).byDate || {};
 
     let cells = [];
     for(let i=0;i<startOffset;i++) cells.push(null);
@@ -998,7 +1347,7 @@ import {
       const cellDate = new Date(year,month,d);
       const iso = fmtISO(cellDate);
       const isToday = iso===fmtISO(today);
-      const completions = completionsByDate[iso] || [];
+      const completions = byDate[iso] || [];
       const dots = completions.slice(0,8).map(c=>`<span class="group-cal-dot" style="background:${c.color}"></span>`).join('');
       return `<div class="cal-cell ${isToday?'today':''} ${completions.length?'has-completions':''}" data-date="${iso}">
         <span class="num">${d}</span>
@@ -1019,7 +1368,8 @@ import {
   }
 
   function openDaySheet(dateIso){
-    const completions = completionsByDate[dateIso] || [];
+    const byDate = (challengeCompletions[selectedCalendarChallengeId] || {}).byDate || {};
+    const completions = byDate[dateIso] || [];
     const completedUids = new Set(completions.map(c=>c.uid));
     const d = parseISO(dateIso);
     document.getElementById('dayCompletionsTitle').textContent = d.toLocaleDateString(undefined,{weekday:'long', month:'long', day:'numeric'});
