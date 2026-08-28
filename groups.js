@@ -537,12 +537,15 @@ import {
   // can't both grab the same color or push the group past MAX_MEMBERS.
   // Returns true on success, false (after toasting) on failure.
   async function joinGroupById(groupId){
+    let joined = false, groupName = null, groupTopic = null;
     try{
       await runTransaction(db, async (tx)=>{
         const gRef = doc(db, 'groups', groupId);
         const gSnap = await tx.get(gRef);
         if(!gSnap.exists()) throw new Error('Group no longer exists');
         const data = gSnap.data();
+        groupName = data.name;
+        groupTopic = data.ntfyTopic;
         const memberUids = data.memberUids || [];
         if(memberUids.includes(currentUser.uid)) return; // already a member
         if(memberUids.length >= MAX_MEMBERS) throw new Error('This group is full (8/8 members)');
@@ -561,7 +564,15 @@ import {
           colorIndex,
           joinedAt: Date.now()
         });
+        joined = true;
       });
+      if(joined && groupTopic){
+        publishNtfy(groupTopic, {
+          title: groupName,
+          message: `${firstName(currentUser.name)} joined the group`,
+          tags: ['wave']
+        });
+      }
       return true;
     }catch(e){
       console.error(e);
@@ -584,6 +595,13 @@ import {
         await updateDoc(gRef, { memberUids });
       }
       await deleteDoc(doc(db, 'groups', activeGroupId, 'members', currentUser.uid));
+      if(activeGroup && activeGroup.ntfyTopic){
+        publishNtfy(activeGroup.ntfyTopic, {
+          title: activeGroup.name,
+          message: `${firstName(currentUser.name)} left the group`,
+          tags: ['wave']
+        });
+      }
       toast('Left group');
       closeGroup();
     }catch(e){
@@ -641,13 +659,13 @@ import {
     return `https://ntfy.sh/${encodeURIComponent(topic)}`;
   }
 
-  async function publishNtfy(topic, {title, message, tags}){
+  async function publishNtfy(topic, {title, message, tags, priority=4}){
     if(!topic) return;
     try{
       await fetch('https://ntfy.sh/', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({ topic, title, message, tags: tags||[] })
+        body: JSON.stringify({ topic, title, message, tags: tags||[], priority })
       });
     }catch(e){
       // Never block/interrupt the check-in flow over a notification
@@ -670,11 +688,11 @@ import {
     // The ntfy Android app registers the ntfy:// scheme and, per ntfy's own
     // docs, ntfy://<host>/<topic> opens straight to that topic's detail
     // view and subscribes automatically if not already subscribed — no
-    // typing the topic name in by hand. iOS/desktop don't register this
-    // scheme, so the button is Android-only; everyone else still has the
-    // plain https link/QR above as their path in.
+    // typing the topic name in by hand. Shown unconditionally rather than
+    // gated on a user-agent sniff — that check is unreliable inside a TWA
+    // wrapper anyway. Elsewhere it just won't resolve to anything, same as
+    // tapping any link for an app that isn't installed.
     const androidAppLink = topic ? `ntfy://ntfy.sh/${encodeURIComponent(topic)}?display=${encodeURIComponent(activeGroup.name)}` : null;
-    const isAndroid = /Android/i.test(navigator.userAgent);
 
     if(!topic){
       // Every group created going forward gets a topic automatically; this
@@ -687,20 +705,17 @@ import {
       <p class="text-sm text-muted mb-16">Get a real push notification — even with this app closed — whenever a teammate completes today's challenge. No app install required: open this group's ntfy page and tap <b>Subscribe</b>, then enable <b>background notifications</b> right there in the browser. (The <a href="https://ntfy.sh" target="_blank" rel="noopener" style="color:var(--accent);">ntfy app</a> works too, if you'd rather use it.)</p>
       <div class="invite-qr-wrap"><div id="ntfySubscribeQr"></div></div>
       <div class="invite-link-box">${escapeHtml(link)}</div>
-      ${isAndroid ? `<button class="btn btn-primary btn-block mb-8" id="btnOpenNtfyAndroidApp">Open in ntfy Android app</button>` : ''}
-      <button class="btn ${isAndroid ? 'btn-secondary' : 'btn-primary'} btn-block mb-8" id="btnOpenNtfyLink">Open ntfy.sh in a new tab</button>
+      <button class="btn btn-primary btn-block mb-8" id="btnOpenNtfyAndroidApp">Open in ntfy Android app</button>
+      <button class="btn btn-secondary btn-block mb-8" id="btnOpenNtfyLink">Open ntfy.sh in a new tab</button>
       <button class="btn btn-secondary btn-block" id="btnCopyNtfyLink">Copy link</button>
       ${isOwner ? `<button class="btn btn-secondary btn-block mt-8" id="btnTestNtfyConfig">Send test notification</button>` : ''}
     `;
     renderQr(link, 'ntfySubscribeQr');
-    const androidBtn = document.getElementById('btnOpenNtfyAndroidApp');
-    if(androidBtn){
-      androidBtn.addEventListener('click', ()=>{
-        // A bare location change (not window.open) is what actually lets
-        // Android's intent-resolution kick in for a custom scheme like this.
-        window.location.href = androidAppLink;
-      });
-    }
+    document.getElementById('btnOpenNtfyAndroidApp').addEventListener('click', ()=>{
+      // A bare location change (not window.open) is what actually lets
+      // Android's intent-resolution kick in for a custom scheme like this.
+      window.location.href = androidAppLink;
+    });
     document.getElementById('btnOpenNtfyLink').addEventListener('click', ()=>{
       window.open(link, '_blank', 'noopener');
     });
@@ -874,6 +889,13 @@ import {
       });
       ui().closeSheet('sheetNewChallenge');
       toast('Challenge created');
+      if(activeGroup && activeGroup.ntfyTopic){
+        publishNtfy(activeGroup.ntfyTopic, {
+          title: activeGroup.name,
+          message: `${firstName(currentUser.name)} set a new challenge: ${title}`,
+          tags: ['triangular_flag_on_post']
+        });
+      }
     }catch(e){
       console.error(e);
       toast('Could not create challenge');
