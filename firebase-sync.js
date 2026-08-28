@@ -26,7 +26,9 @@ import {
     console.warn('Firebase config not set — sign-in and cloud sync are disabled. Edit firebase-config.js.');
     window.GymSync = {
       init(){}, push(){}, signIn(){ alert('Cloud sync is not configured yet.'); }, signOut(){},
-      isSignedIn(){ return false; }
+      isSignedIn(){ return false; }, isConfigured(){ return false; },
+      getDb(){ return null; }, getAuth(){ return null; }, getCurrentUser(){ return null; },
+      onAuthChange(){ return ()=>{}; }
     };
     return;
   }
@@ -35,6 +37,11 @@ import {
   const auth = getAuth(app);
   const db = getFirestore(app);
   const provider = new GoogleAuthProvider();
+
+  // Extra listeners registered via onAuthChange (e.g. groups.js), separate
+  // from the single onAuthChangeCb the core sync flow uses above — lets
+  // other modules react to sign-in state without fighting over one callback slot.
+  const extraAuthListeners = new Set();
 
   let currentUser = null;
   let unsubscribeSnapshot = null;
@@ -130,6 +137,7 @@ import {
         lastPushedJson = null;
         onAuthChangeCb({signedIn:false});
       }
+      extraAuthListeners.forEach(cb=>{ try{ cb(user); }catch(e){ console.error(e); } });
     });
   }
 
@@ -138,6 +146,19 @@ import {
     push,
     signIn,
     signOut: doSignOut,
-    isSignedIn(){ return !!currentUser; }
+    isSignedIn(){ return !!currentUser; },
+    isConfigured(){ return true; },
+    // Shared Firebase app/db handles so other modules (groups.js) can reuse
+    // the same Firebase app instance instead of calling initializeApp again.
+    getDb(){ return db; },
+    getAuth(){ return auth; },
+    getCurrentUser(){ return currentUser; },
+    // Registers a listener for auth changes and immediately replays the
+    // current user, so a module that loads/subscribes late doesn't miss it.
+    onAuthChange(cb){
+      extraAuthListeners.add(cb);
+      cb(currentUser);
+      return ()=>extraAuthListeners.delete(cb);
+    }
   };
 })();
