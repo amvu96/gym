@@ -19,7 +19,7 @@
    ============================================================ */
 import {
   collection, doc, getDoc, getDocs, setDoc, addDoc, updateDoc, deleteDoc,
-  query, where, orderBy, onSnapshot, runTransaction, serverTimestamp, limit, deleteField
+  query, where, orderBy, onSnapshot, runTransaction, serverTimestamp, limit, deleteField, arrayRemove
 } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js";
 
 (function(){
@@ -477,6 +477,10 @@ import {
     document.getElementById('btnChallengeHistory').addEventListener('click', showChallengeHistorySheet);
     document.getElementById('btnActivityFeed').addEventListener('click', showActivityFeedSheet);
     document.getElementById('btnLeaderboard').addEventListener('click', showLeaderboardSheet);
+    document.getElementById('btnModeration').addEventListener('click', showModerationSheet);
+    document.getElementById('btnModSaveName').addEventListener('click', saveGroupRename);
+    document.getElementById('btnModRegenerateInvite').addEventListener('click', regenerateInviteCode);
+    document.getElementById('btnModDeleteGroup').addEventListener('click', deleteGroupEntirely);
 
     document.getElementById('calGroupPrevMonth').addEventListener('click', ()=>{
       calCursor.setMonth(calCursor.getMonth()-1); renderGroupCalendar();
@@ -793,6 +797,8 @@ import {
     if(!gSnap.exists()){ toast('Group not found'); closeGroup(); return; }
     activeGroup = {id:groupId, ...gSnap.data()};
     document.getElementById('groupDetailName').textContent = activeGroup.name;
+    document.getElementById('btnModeration').style.display =
+      (currentUser && activeGroup.ownerUid===currentUser.uid) ? '' : 'none';
 
     teardownDetailListeners();
 
@@ -1008,7 +1014,7 @@ import {
       return;
     }
 
-    container.innerHTML = activeChallenges.map(ch=>{
+    const cardsHtml = activeChallenges.map(ch=>{
       const entry = challengeCompletions[ch.id];
       const byDate = entry ? entry.byDate : {};
       const progress = computeChallengeProgress(ch, byDate);
@@ -1022,7 +1028,7 @@ import {
         ? (progress.doneToday ? '✓ Done today' : 'Not done today')
         : `${progress.periodCount}/${progress.periodTarget} ${progress.periodLabel}${progress.metTarget?' ✓':''}`;
 
-      return `<div class="card mb-12">
+      return `<div class="card group-challenge-card">
         <div class="settings-row-label">${escapeHtml(ch.title)}</div>
         ${ch.targetLabel ? `<div class="text-sm text-muted">${escapeHtml(ch.targetLabel)}</div>` : ''}
         <div class="text-sm text-faint mt-4">${freqLabel} · ${fmtRange(ch.startDate, ch.endDate)}${isPastEnd?' · Ended':''}</div>
@@ -1034,12 +1040,38 @@ import {
       </div>`;
     }).join('');
 
+    // Same horizontally-scrollable, snap-to-card carousel pattern as the
+    // Home screen's "Scheduled for today" row — one challenge per swipe,
+    // with dot pagination once there's more than one to page through.
+    container.innerHTML = `
+      <div class="group-challenge-carousel" id="groupChallengeCarousel">${cardsHtml}</div>
+      ${activeChallenges.length>1 ? `<div class="routine-carousel-dots" id="groupChallengeDots">
+        ${activeChallenges.map((_,i)=>`<div class="routine-carousel-dot ${i===0?'active':''}" data-dot="${i}"></div>`).join('')}
+      </div>` : ''}
+    `;
+
     container.querySelectorAll('[data-mark-done]').forEach(btn=>{
       btn.addEventListener('click', ()=>markChallengeDone(btn.dataset.markDone));
     });
     container.querySelectorAll('[data-end-challenge]').forEach(btn=>{
       btn.addEventListener('click', ()=>endChallenge(btn.dataset.endChallenge));
     });
+
+    if(activeChallenges.length>1){
+      const carousel = document.getElementById('groupChallengeCarousel');
+      const dotsWrap = document.getElementById('groupChallengeDots');
+      carousel.onscroll = ()=>{
+        clearTimeout(carousel._scrollDebounce);
+        carousel._scrollDebounce = setTimeout(()=>{
+          const cardWidth = carousel.clientWidth;
+          if(cardWidth===0) return;
+          const activeIdx = Math.round(carousel.scrollLeft / cardWidth);
+          dotsWrap.querySelectorAll('.routine-carousel-dot').forEach((dot,i)=>{
+            dot.classList.toggle('active', i===activeIdx);
+          });
+        }, 60);
+      };
+    }
   }
 
   function fmtRange(startIso, endIso){
@@ -1133,6 +1165,125 @@ import {
     }catch(e){
       console.error(e);
       toast('Could not save — try again');
+    }
+  }
+
+  /* ---------------- moderation (owner only) ---------------- */
+  function showModerationSheet(){
+    if(!activeGroupId || !activeGroup) return;
+    document.getElementById('modGroupNameInput').value = activeGroup.name;
+    renderModMembersList();
+    ui().openSheet('sheetModeration');
+  }
+
+  function renderModMembersList(){
+    const list = document.getElementById('modMembersList');
+    if(activeMembers.length<=1){
+      list.innerHTML = `<p class="text-sm text-muted">No other members yet.</p>`;
+      return;
+    }
+    list.innerHTML = activeMembers.map(m=>{
+      const owner = isOwnerUid(m.uid);
+      return `<div class="row" style="padding:8px 0; border-bottom:1px solid var(--border-soft);">
+        <div style="display:flex; align-items:center; gap:10px; min-width:0;">
+          <span class="group-color-dot" style="background:${m.color};"></span>
+          <span>${escapeHtml(m.displayName)}${owner ? ' <span class="group-crown" title="Group owner">📋</span>' : ''}</span>
+        </div>
+        ${owner ? '' : `<button class="btn btn-secondary btn-sm" data-kick-member="${m.uid}" style="border-color:var(--danger-dim); color:var(--danger); flex-shrink:0;">Remove</button>`}
+      </div>`;
+    }).join('');
+    list.querySelectorAll('[data-kick-member]').forEach(btn=>{
+      btn.addEventListener('click', ()=>kickMember(btn.dataset.kickMember));
+    });
+  }
+
+  async function saveGroupRename(){
+    const name = document.getElementById('modGroupNameInput').value.trim();
+    if(!name){ toast('Enter a group name'); return; }
+    try{
+      await updateDoc(doc(db, 'groups', activeGroupId), {name});
+      activeGroup.name = name;
+      document.getElementById('groupDetailName').textContent = name;
+      toast('Group renamed');
+    }catch(e){
+      console.error(e);
+      toast('Could not rename group');
+    }
+  }
+
+  async function regenerateInviteCode(){
+    const ok = ui().confirmDialog ? await ui().confirmDialog({
+      title:'Regenerate invite code?',
+      message:'The old link and QR code will stop working. Anyone who hasn\'t already joined will need the new one.',
+      confirmLabel:'Regenerate', danger:true
+    }) : confirm('Regenerate the invite code? The old link will stop working.');
+    if(!ok) return;
+    try{
+      const newCode = randomCode();
+      await updateDoc(doc(db, 'groups', activeGroupId), {inviteCode: newCode});
+      activeGroup.inviteCode = newCode;
+      toast('Invite code regenerated');
+    }catch(e){
+      console.error(e);
+      toast('Could not regenerate invite code');
+    }
+  }
+
+  async function kickMember(uid){
+    const m = activeMembers.find(x=>x.uid===uid);
+    if(!m) return;
+    const ok = ui().confirmDialog ? await ui().confirmDialog({
+      title:'Remove member?',
+      message:`${m.displayName} will be removed from the group and lose access to its challenges and calendar.`,
+      confirmLabel:'Remove', danger:true
+    }) : confirm(`Remove ${m.displayName} from the group?`);
+    if(!ok) return;
+    try{
+      await updateDoc(doc(db, 'groups', activeGroupId), {
+        memberUids: arrayRemove(uid)
+      });
+      await deleteDoc(doc(db, 'groups', activeGroupId, 'members', uid));
+      activeGroup.memberUids = (activeGroup.memberUids||[]).filter(x=>x!==uid);
+      toast(`${firstName(m.displayName)} removed`);
+      renderModMembersList();
+    }catch(e){
+      console.error(e);
+      toast('Could not remove member');
+    }
+  }
+
+  // Permanently deletes the group and everything under it — members,
+  // challenges, and every challenge's completions — not just the group doc
+  // itself, so nothing gets left behind as orphaned, unreachable data.
+  // Firestore has no cascading delete, so this is done client-side, one
+  // collection at a time, before finally removing the group doc.
+  async function deleteGroupEntirely(){
+    if(!activeGroupId || !activeGroup) return;
+    const ok = ui().confirmDialog ? await ui().confirmDialog({
+      title:`Delete "${activeGroup.name}"?`,
+      message:'This permanently deletes the group for everyone — all challenges, check-ins, and history. This cannot be undone.',
+      confirmLabel:'Delete permanently', danger:true
+    }) : confirm(`Permanently delete "${activeGroup.name}"? This cannot be undone.`);
+    if(!ok) return;
+
+    const groupId = activeGroupId;
+    try{
+      const challengesSnap = await getDocs(collection(db, 'groups', groupId, 'challenges'));
+      for(const chDoc of challengesSnap.docs){
+        const compSnap = await getDocs(collection(db, 'groups', groupId, 'challenges', chDoc.id, 'completions'));
+        await Promise.all(compSnap.docs.map(d=>deleteDoc(d.ref)));
+        await deleteDoc(chDoc.ref);
+      }
+      const membersSnap = await getDocs(collection(db, 'groups', groupId, 'members'));
+      await Promise.all(membersSnap.docs.map(d=>deleteDoc(d.ref)));
+      await deleteDoc(doc(db, 'groups', groupId));
+
+      toast('Group deleted');
+      ui().closeSheet('sheetModeration');
+      closeGroup();
+    }catch(e){
+      console.error(e);
+      toast('Could not fully delete the group — try again');
     }
   }
 
