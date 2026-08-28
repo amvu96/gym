@@ -42,6 +42,11 @@ import {
   // from the single onAuthChangeCb the core sync flow uses above — lets
   // other modules react to sign-in state without fighting over one callback slot.
   const extraAuthListeners = new Set();
+  // Shared shape for anything outside this module: {uid, name, email, photo}
+  // rather than the raw Firebase User object's .displayName/.photoURL.
+  function normalizeUser(user){
+    return user ? {uid:user.uid, name:user.displayName, email:user.email, photo:user.photoURL} : null;
+  }
 
   let currentUser = null;
   let unsubscribeSnapshot = null;
@@ -137,7 +142,7 @@ import {
         lastPushedJson = null;
         onAuthChangeCb({signedIn:false});
       }
-      extraAuthListeners.forEach(cb=>{ try{ cb(user); }catch(e){ console.error(e); } });
+      extraAuthListeners.forEach(cb=>{ try{ cb(normalizeUser(user)); }catch(e){ console.error(e); } });
     });
   }
 
@@ -152,12 +157,15 @@ import {
     // the same Firebase app instance instead of calling initializeApp again.
     getDb(){ return db; },
     getAuth(){ return auth; },
-    getCurrentUser(){ return currentUser; },
+    getCurrentUser(){ return normalizeUser(currentUser); },
     // Registers a listener for auth changes and immediately replays the
     // current user, so a module that loads/subscribes late doesn't miss it.
+    // Normalized to {uid, name, email, photo} — same shape used elsewhere —
+    // rather than the raw Firebase User object, whose fields are
+    // .displayName/.photoURL, not .name/.photo.
     onAuthChange(cb){
       extraAuthListeners.add(cb);
-      cb(currentUser);
+      cb(normalizeUser(currentUser));
       return ()=>extraAuthListeners.delete(cb);
     }
   };
