@@ -768,6 +768,33 @@ body.workout-active{padding-bottom:calc(96px + env(safe-area-inset-bottom));}
 .cal-legend-item{display:flex; align-items:center; gap:6px; font-size:11px; color:var(--text-muted);}
 .cal-legend-swatch{width:10px; height:10px; border-radius:3px;}
 
+/* ---------------- GROUP CHALLENGES ---------------- */
+.group-list-item{transition:border-color .15s;}
+.group-list-item:active{border-color:var(--accent-dim);}
+.group-members-row{display:flex; gap:8px; flex-wrap:wrap; margin-bottom:16px;}
+.group-member-chip{
+  display:flex; align-items:center; gap:6px; padding:6px 10px 6px 8px;
+  background:var(--panel-raised); border:1px solid var(--border-soft);
+  border-radius:99px; font-size:11px; color:var(--text-muted); font-weight:600;
+}
+.group-member-chip-muted{color:var(--text-faint);}
+.group-color-dot{width:9px; height:9px; border-radius:50%; display:inline-block; flex-shrink:0;}
+.group-cal-dots{
+  display:flex; flex-wrap:wrap; gap:2px; justify-content:center;
+  position:absolute; bottom:5px; left:0; right:0; padding:0 3px;
+}
+.group-cal-dot{width:4px; height:4px; border-radius:50%; flex-shrink:0;}
+.cal-cell.has-completions{border-color:var(--border);}
+.invite-qr-wrap{display:flex; justify-content:center; margin:16px 0;}
+.invite-link-box{
+  background:var(--input-bg); border:1px solid var(--border); border-radius:var(--radius-sm);
+  padding:10px 12px; font-size:12px; color:var(--text-muted); word-break:break-all; margin-bottom:12px;
+}
+.invite-code-box{
+  text-align:center; font-size:24px; font-weight:700; letter-spacing:0.12em;
+  color:var(--accent); margin-bottom:16px;
+}
+
 .month-summary-grid{display:grid; grid-template-columns:repeat(2,1fr); gap:10px; margin-bottom:20px;}
 
 /* ============ EXERCISE LIBRARY / PROGRESS ============ */
@@ -1379,6 +1406,44 @@ body.sheet-open{overflow:hidden;}
     <div id="templatesFullList"></div>
   </section>
 
+  <!-- ============ GROUP CHALLENGES VIEW ============ -->
+  <section class="view" id="view-groups">
+    <div id="groupsPanelList">
+      <button class="btn btn-primary btn-block mb-8" id="btnNewGroup">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>
+        New group
+      </button>
+      <button class="btn btn-secondary btn-block mb-16" id="btnJoinGroup">Join a group</button>
+      <div id="groupsListContainer"></div>
+    </div>
+
+    <div id="groupsPanelDetail" style="display:none;">
+      <div class="row mb-16">
+        <button class="cal-nav-btn" id="btnBackToGroups"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button>
+        <h2 id="groupDetailName" style="flex:1; text-align:center; margin:0;">—</h2>
+        <button class="cal-nav-btn" id="btnInviteMembers"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 3.13a4 4 0 0 1 0 7.75"/><path d="M12 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8" cy="7" r="4"/><path d="M20 8v6M23 11h-6"/></svg></button>
+      </div>
+
+      <div class="group-members-row" id="groupMembersRow"></div>
+
+      <div id="groupChallengeCard"></div>
+      <button class="btn btn-primary btn-block mb-16" id="btnMarkDoneToday" style="display:none;">Mark today done</button>
+      <button class="btn btn-secondary btn-block mb-16" id="btnNewChallenge" style="display:none;">Set a new challenge</button>
+
+      <h2 class="section-label">Shared calendar</h2>
+      <div class="cal-header">
+        <button class="cal-nav-btn" id="calGroupPrevMonth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg></button>
+        <h2 id="calGroupMonthLabel">—</h2>
+        <button class="cal-nav-btn" id="calGroupNextMonth"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18l6-6-6-6"/></svg></button>
+      </div>
+      <div class="cal-grid" id="calGroupDowRow"></div>
+      <div class="cal-grid" id="calGroupGrid"></div>
+      <div class="cal-legend" id="calGroupLegend"></div>
+
+      <button class="btn btn-secondary btn-block mb-16" id="btnLeaveGroup" style="display:none; border-color:var(--danger-dim); color:var(--danger);">Leave group</button>
+    </div>
+  </section>
+
   <!-- ============ SETTINGS / DATA VIEW ============ -->
   <section class="view" id="view-settings">
     <div class="settings-group">
@@ -1499,6 +1564,10 @@ body.sheet-open{overflow:hidden;}
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
       Routines
     </button>
+    <button class="tab-btn" data-view="groups">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="7" r="4"/><path d="M2 21v-2a4 4 0 0 1 4-4h6a4 4 0 0 1 4 4v2"/><circle cx="17" cy="7" r="3"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/></svg>
+      Groups
+    </button>
   </div>
 </nav>
 
@@ -1594,6 +1663,65 @@ body.sheet-open{overflow:hidden;}
     <div id="exerciseDetailContent"></div>
   </div>
   <div class="sheet-footer" id="exerciseDetailFooter"></div>
+</div>
+
+<div class="sheet" id="sheetCreateGroup">
+  <div class="sheet-handle-hitarea"><div class="sheet-handle"></div></div>
+  <div class="sheet-title">New group</div>
+  <div class="field" style="margin-bottom:16px;">
+    <label>Group name</label>
+    <input type="text" id="newGroupNameInput" placeholder="e.g. Morning Crew" autocomplete="off">
+  </div>
+  <button class="btn btn-primary btn-block" id="btnConfirmCreateGroup">Create group</button>
+</div>
+
+<div class="sheet" id="sheetJoinGroup">
+  <div class="sheet-handle-hitarea"><div class="sheet-handle"></div></div>
+  <div class="sheet-title">Join a group</div>
+  <div class="field" style="margin-bottom:16px;">
+    <label>Invite code</label>
+    <input type="text" id="joinGroupCodeInput" placeholder="e.g. AB3XQ9" autocomplete="off" style="text-transform:uppercase;">
+  </div>
+  <button class="btn btn-primary btn-block" id="btnConfirmJoinGroup">Join</button>
+</div>
+
+<div class="sheet" id="sheetInvite">
+  <div class="sheet-handle-hitarea"><div class="sheet-handle"></div></div>
+  <div class="sheet-title">Invite members</div>
+  <div class="invite-qr-wrap"><div id="inviteQrCanvas"></div></div>
+  <div class="invite-code-box" id="inviteCodeText">—</div>
+  <div class="invite-link-box" id="inviteLinkText">—</div>
+  <button class="btn btn-primary btn-block mb-8" id="btnShareInviteLink">Share invite link</button>
+  <button class="btn btn-secondary btn-block" id="btnCopyInviteLink">Copy link</button>
+</div>
+
+<div class="sheet" id="sheetNewChallenge">
+  <div class="sheet-handle-hitarea"><div class="sheet-handle"></div></div>
+  <div class="sheet-title">New challenge</div>
+  <div class="field" style="margin-bottom:16px;">
+    <label>Title</label>
+    <input type="text" id="challengeTitleInput" placeholder="e.g. 50 push-ups daily" autocomplete="off">
+  </div>
+  <div class="field" style="margin-bottom:16px;">
+    <label>Target (optional)</label>
+    <input type="text" id="challengeTargetInput" placeholder="e.g. 50 push-ups" autocomplete="off">
+  </div>
+  <div class="field" style="margin-bottom:16px;">
+    <label>Start date</label>
+    <input type="date" id="challengeStartInput">
+  </div>
+  <div class="field" style="margin-bottom:16px;">
+    <label>End date</label>
+    <input type="date" id="challengeEndInput">
+  </div>
+  <p class="text-sm text-faint mb-16">Starting a new challenge replaces the group's current one.</p>
+  <button class="btn btn-primary btn-block" id="btnConfirmNewChallenge">Start challenge</button>
+</div>
+
+<div class="sheet" id="sheetDayCompletions">
+  <div class="sheet-handle-hitarea"><div class="sheet-handle"></div></div>
+  <div class="sheet-title" id="dayCompletionsTitle">—</div>
+  <div id="dayCompletionsList"></div>
 </div>
 
 <div class="sheet" id="sheetSaveTemplate">
@@ -1738,5 +1866,7 @@ body.sheet-open{overflow:hidden;}
 <script type="module" src="muscle-map-bridge.js"></script>
 <script src="exercises.js"></script>
 <script src="app.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script type="module" src="groups.js"></script>
 </body>
 </html>
