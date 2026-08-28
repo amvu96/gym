@@ -422,6 +422,19 @@ main{max-width:640px; margin:0 auto; padding:18px 16px 40px;}
 .today-routine-chevron{color:var(--accent); flex-shrink:0; opacity:0.8;}
 .today-routine-chevron svg{width:20px; height:20px;}
 
+/* Group-challenge variant: same carousel/card shape, red instead of green
+   so it reads as a shared commitment, not a personal routine suggestion. */
+.today-routine-card.group-challenge{
+  background:linear-gradient(155deg, var(--danger-dim), var(--panel) 55%);
+  border-color:var(--danger-dim);
+}
+.today-routine-card.group-challenge::before{
+  background:radial-gradient(circle, var(--danger-dim), transparent 70%);
+}
+.today-routine-card.group-challenge .today-routine-label{color:var(--danger);}
+.today-routine-card.group-challenge .today-routine-chevron{color:var(--danger);}
+.today-routine-card.group-challenge .today-routine-meta.done{color:var(--positive);}
+
 /* Recent sessions — fixed height showing ~3 rows, rest reachable by scroll */
 .recent-sessions-scroll{
   background:var(--panel); border:1px solid var(--border); border-radius:16px;
