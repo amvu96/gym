@@ -50,6 +50,8 @@ import {
   let calCursor = new Date();
   let selectedChallengeFreq = 'daily'; // working selection in the "New challenge" sheet
   let activityFeedItems = []; // merged, cached feed for the currently-open group
+  let activityLogItems = []; // live "transparency log" — rename/join/leave/kick/etc, no reactions
+  let activityLogUnsub = null;
 
   /* ---------------- small local date helpers (kept independent of app.js) ---------------- */
   function fmtISO(d){ return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
@@ -593,7 +595,7 @@ import {
   // can't both grab the same color or push the group past MAX_MEMBERS.
   // Returns true on success, false (after toasting) on failure.
   async function joinGroupById(groupId){
-    let joined = false, groupName = null, groupTopic = null;
+    let joined = false, groupName = null, groupTopic = null, myColor = null;
     try{
       await runTransaction(db, async (tx)=>{
         const gRef = doc(db, 'groups', groupId);
@@ -610,24 +612,28 @@ import {
         // against an arbitrary-length list cheaply, so colorIndex is derived
         // from position in memberUids, which we already have transactionally.
         const colorIndex = memberUids.length % PALETTE.length;
+        myColor = PALETTE[colorIndex];
 
         tx.update(gRef, { memberUids: [...memberUids, currentUser.uid] });
         tx.set(doc(db, 'groups', groupId, 'members', currentUser.uid), {
           uid: currentUser.uid,
           displayName: currentUser.name || 'Member',
           photoURL: currentUser.photo || '',
-          color: PALETTE[colorIndex],
+          color: myColor,
           colorIndex,
           joinedAt: Date.now()
         });
         joined = true;
       });
-      if(joined && groupTopic){
-        publishNtfy(groupTopic, {
-          title: groupName,
-          message: `${firstName(currentUser.name)} joined the group`,
-          tags: ['wave']
-        });
+      if(joined){
+        logGroupEvent(groupId, 'joined the group', myColor);
+        if(groupTopic){
+          publishNtfy(groupTopic, {
+            title: groupName,
+            message: `${firstName(currentUser.name)} joined the group`,
+            tags: ['wave']
+          });
+        }
       }
       return true;
     }catch(e){
@@ -638,27 +644,78 @@ import {
   }
 
   async function leaveActiveGroup(){
-    if(!activeGroupId) return;
+    if(!activeGroupId || !currentUser) return;
+    const amOwner = activeGroup && activeGroup.ownerUid === currentUser.uid;
+    // Best-guess successor for the confirm-dialog copy only — whoever's
+    // been in the group longest, besides me. Recomputed against fresh data
+    // at write time below, so a stale guess here can't cause a bad write.
+    const guessedSuccessor = amOwner
+      ? activeMembers.filter(m=>m.uid!==currentUser.uid).sort((a,b)=>(a.joinedAt||0)-(b.joinedAt||0))[0]
+      : null;
+
+    const message = !amOwner
+      ? 'You\'ll stop seeing this group\'s challenge and calendar.'
+      : guessedSuccessor
+        ? `You're the owner — ${firstName(guessedSuccessor.displayName)} will become the new owner when you leave.`
+        : 'You\'re the only member — leaving will leave this group with no members.';
+
     const ok = ui().confirmDialog ? await ui().confirmDialog({
-      title:'Leave group?', message:'You\'ll stop seeing this group\'s challenge and calendar.', confirmLabel:'Leave', danger:true
+      title:'Leave group?', message, confirmLabel:'Leave', danger:true
     }) : confirm('Leave this group?');
     if(!ok) return;
+
     try{
       const gRef = doc(db, 'groups', activeGroupId);
       const gSnap = await getDoc(gRef);
+      let newOwnerMember = null;
+      let groupDeleted = false;
+
       if(gSnap.exists()){
-        const memberUids = (gSnap.data().memberUids||[]).filter(u=>u!==currentUser.uid);
-        await updateDoc(gRef, { memberUids });
+        const data = gSnap.data();
+        const remainingUids = (data.memberUids||[]).filter(u=>u!==currentUser.uid);
+        const iAmOwner = data.ownerUid===currentUser.uid;
+
+        if(iAmOwner && remainingUids.length===0){
+          // Last member leaving — nobody left to hand off to, and nobody
+          // left to ever see this group again, so remove it entirely
+          // rather than leaving an empty, permanently-orphaned husk.
+          await cascadeDeleteGroupData(activeGroupId);
+          groupDeleted = true;
+        } else {
+          const updatePayload = { memberUids: remainingUids };
+          // Only the group's actual current owner (per fresh server data,
+          // not our possibly-stale local copy) triggers a hand-off, and
+          // only to someone still genuinely in remainingUids — so the
+          // group is never left ownerless even if things changed since
+          // the dialog opened.
+          if(iAmOwner && remainingUids.length>0){
+            const candidates = activeMembers.filter(m=>remainingUids.includes(m.uid))
+              .sort((a,b)=>(a.joinedAt||0)-(b.joinedAt||0));
+            const newOwnerUid = candidates.length ? candidates[0].uid : remainingUids[0];
+            updatePayload.ownerUid = newOwnerUid;
+            newOwnerMember = candidates.find(m=>m.uid===newOwnerUid) || null;
+          }
+          await updateDoc(gRef, updatePayload);
+          // Log while we're still a recognized member — the activity log's
+          // write rule requires that — then remove our own membership doc.
+          await logGroupEvent(activeGroupId, newOwnerMember
+            ? `left the group — ownership passed to ${newOwnerMember.displayName}`
+            : 'left the group');
+          await deleteDoc(doc(db, 'groups', activeGroupId, 'members', currentUser.uid));
+        }
       }
-      await deleteDoc(doc(db, 'groups', activeGroupId, 'members', currentUser.uid));
-      if(activeGroup && activeGroup.ntfyTopic){
+      if(!groupDeleted && activeGroup && activeGroup.ntfyTopic){
         publishNtfy(activeGroup.ntfyTopic, {
           title: activeGroup.name,
-          message: `${firstName(currentUser.name)} left the group`,
+          message: newOwnerMember
+            ? `${firstName(currentUser.name)} left the group — ${firstName(newOwnerMember.displayName)} is now the owner`
+            : `${firstName(currentUser.name)} left the group`,
           tags: ['wave']
         });
       }
-      toast('Left group');
+      toast(groupDeleted
+        ? 'Left group — it had no other members, so it was deleted'
+        : (newOwnerMember ? `Left group — ownership passed to ${firstName(newOwnerMember.displayName)}` : 'Left group'));
       closeGroup();
     }catch(e){
       console.error(e);
@@ -841,11 +898,25 @@ import {
     });
 
     listenToActiveChallenges();
+
+    // Live "transparency log" — rename, join/leave, kick, ownership
+    // changes, challenge start/end. Single-field orderBy+limit needs no
+    // composite index. Kept separate from activityFeedItems (completions)
+    // since only completions ever get the emoji-reaction row.
+    activityLogUnsub = onSnapshot(
+      query(collection(db, 'groups', groupId, 'activityLog'), orderBy('at', 'desc'), limit(50)),
+      (snap)=>{
+        activityLogItems = snap.docs.map(d=>({id:d.id, ...d.data()}));
+        renderActivityFeedList();
+      },
+      (err)=>console.error('activity log listen failed', err)
+    );
   }
 
   function teardownDetailListeners(){
     if(membersUnsub){ membersUnsub(); membersUnsub = null; }
     if(challengeUnsub){ challengeUnsub(); challengeUnsub = null; }
+    if(activityLogUnsub){ activityLogUnsub(); activityLogUnsub = null; }
     Object.values(challengeCompletions).forEach(entry=>{ if(entry.unsub) entry.unsub(); });
     challengeCompletions = {};
   }
@@ -855,6 +926,7 @@ import {
     activeGroupId = null; activeGroup = null; activeMembers = []; activeChallenges = [];
     selectedCalendarChallengeId = null;
     activityFeedItems = [];
+    activityLogItems = [];
     renderRoot();
   }
 
@@ -1127,6 +1199,7 @@ import {
       });
       ui().closeSheet('sheetNewChallenge');
       toast('Challenge created');
+      logGroupEvent(activeGroupId, `started a new challenge: "${title}"`);
       if(activeGroup && activeGroup.ntfyTopic){
         publishNtfy(activeGroup.ntfyTopic, {
           title: activeGroup.name,
@@ -1153,6 +1226,7 @@ import {
     try{
       await updateDoc(doc(db, 'groups', activeGroupId, 'challenges', challengeId), {active:false, endedAt: Date.now()});
       toast('Challenge ended');
+      logGroupEvent(activeGroupId, `ended the challenge "${ch.title}"`);
     }catch(e){
       console.error(e);
       toast('Could not end challenge');
@@ -1198,6 +1272,30 @@ import {
     }
   }
 
+  // Writes a transparency-log entry for a group event (rename, join, leave,
+  // kick, ownership change, challenge created/ended, etc.) — shown in the
+  // Activity feed alongside challenge check-ins, but never reactable (see
+  // renderActivityFeedList: only completion-type items get the emoji row).
+  // Self-attributed by design: the underlying privileged actions (rename,
+  // kick, transfer...) are already independently gated by their own rules;
+  // this collection is a transparency trail, not itself an authorization
+  // boundary, so a failed write here never blocks or reverts the actual
+  // action it's describing.
+  async function logGroupEvent(groupId, message, colorOverride){
+    if(!currentUser || !groupId) return;
+    try{
+      await addDoc(collection(db, 'groups', groupId, 'activityLog'), {
+        message,
+        actorUid: currentUser.uid,
+        actorName: currentUser.name || 'Member',
+        color: colorOverride || (activeMembers.find(m=>m.uid===currentUser.uid)||{}).color || PALETTE[0],
+        at: Date.now()
+      });
+    }catch(e){
+      console.error('activity log write failed', e);
+    }
+  }
+
   /* ---------------- moderation (owner only) ---------------- */
   function showModerationSheet(){
     if(!activeGroupId || !activeGroup) return;
@@ -1214,16 +1312,22 @@ import {
     }
     list.innerHTML = activeMembers.map(m=>{
       const owner = isOwnerUid(m.uid);
-      return `<div class="row" style="padding:8px 0; border-bottom:1px solid var(--border-soft);">
+      return `<div class="row" style="padding:8px 0; border-bottom:1px solid var(--border-soft); flex-wrap:wrap; gap:8px;">
         <div style="display:flex; align-items:center; gap:10px; min-width:0;">
           <span class="group-color-dot" style="background:${m.color};"></span>
           <span>${escapeHtml(m.displayName)}${owner ? ' <span class="group-crown" title="Group owner">📋</span>' : ''}</span>
         </div>
-        ${owner ? '' : `<button class="btn btn-secondary btn-sm" data-kick-member="${m.uid}" style="border-color:var(--danger-dim); color:var(--danger); flex-shrink:0;">Remove</button>`}
+        ${owner ? '' : `<div style="display:flex; gap:6px; flex-shrink:0;">
+          <button class="btn btn-secondary btn-sm" data-transfer-owner="${m.uid}">Make owner</button>
+          <button class="btn btn-secondary btn-sm" data-kick-member="${m.uid}" style="border-color:var(--danger-dim); color:var(--danger);">Remove</button>
+        </div>`}
       </div>`;
     }).join('');
     list.querySelectorAll('[data-kick-member]').forEach(btn=>{
       btn.addEventListener('click', ()=>kickMember(btn.dataset.kickMember));
+    });
+    list.querySelectorAll('[data-transfer-owner]').forEach(btn=>{
+      btn.addEventListener('click', ()=>transferOwnership(btn.dataset.transferOwner));
     });
   }
 
@@ -1235,6 +1339,7 @@ import {
       activeGroup.name = name;
       document.getElementById('groupDetailName').textContent = name;
       toast('Group renamed');
+      logGroupEvent(activeGroupId, `renamed the group to "${name}"`);
     }catch(e){
       console.error(e);
       toast('Could not rename group');
@@ -1253,9 +1358,44 @@ import {
       await updateDoc(doc(db, 'groups', activeGroupId), {inviteCode: newCode});
       activeGroup.inviteCode = newCode;
       toast('Invite code regenerated');
+      logGroupEvent(activeGroupId, 'regenerated the invite code');
     }catch(e){
       console.error(e);
       toast('Could not regenerate invite code');
+    }
+  }
+
+  // Deliberate hand-off, initiated by the current owner, while they stay a
+  // regular member afterward. Distinct from the auto-succession that
+  // happens if the owner leaves the group entirely without doing this
+  // first (see leaveActiveGroup) — this is the "do it on purpose, in
+  // advance" path; that one's the safety net for when nobody does.
+  async function transferOwnership(uid){
+    const m = activeMembers.find(x=>x.uid===uid);
+    if(!m) return;
+    const ok = ui().confirmDialog ? await ui().confirmDialog({
+      title:'Transfer ownership?',
+      message:`${m.displayName} will become the group owner. You'll keep your membership but lose owner controls — moderation, setting challenges, and so on.`,
+      confirmLabel:'Transfer', danger:true
+    }) : confirm(`Make ${m.displayName} the new owner?`);
+    if(!ok) return;
+    try{
+      await updateDoc(doc(db, 'groups', activeGroupId), {ownerUid: uid});
+      activeGroup.ownerUid = uid;
+      toast(`${firstName(m.displayName)} is now the owner`);
+      logGroupEvent(activeGroupId, `made ${m.displayName} the group owner`);
+      // We're no longer the owner ourselves — hide our own owner-only
+      // controls immediately rather than waiting for a re-open. The new
+      // owner's own device picks this up next time they open the group
+      // (there's no live listener on the group doc itself to push it to
+      // them instantly).
+      document.getElementById('btnModeration').style.display = 'none';
+      ui().closeSheet('sheetModeration');
+      renderMembersRow();
+      renderChallengesList();
+    }catch(e){
+      console.error(e);
+      toast('Could not transfer ownership');
     }
   }
 
@@ -1272,6 +1412,7 @@ import {
       await updateDoc(doc(db, 'groups', activeGroupId), {
         memberUids: arrayRemove(uid)
       });
+      logGroupEvent(activeGroupId, `removed ${m.displayName} from the group`);
       await deleteDoc(doc(db, 'groups', activeGroupId, 'members', uid));
       activeGroup.memberUids = (activeGroup.memberUids||[]).filter(x=>x!==uid);
       toast(`${firstName(m.displayName)} removed`);
@@ -1287,6 +1428,26 @@ import {
   // itself, so nothing gets left behind as orphaned, unreachable data.
   // Firestore has no cascading delete, so this is done client-side, one
   // collection at a time, before finally removing the group doc.
+  // Deletes everything under a group — challenges, their completions, the
+  // activity log, and members — then the group doc itself. Firestore has
+  // no cascading delete, so this walks each collection client-side. Shared
+  // by the explicit "Delete group" moderation action and by the owner
+  // leaving an otherwise-empty group (see leaveActiveGroup), so an empty,
+  // permanently-orphaned group never lingers.
+  async function cascadeDeleteGroupData(groupId){
+    const challengesSnap = await getDocs(collection(db, 'groups', groupId, 'challenges'));
+    for(const chDoc of challengesSnap.docs){
+      const compSnap = await getDocs(collection(db, 'groups', groupId, 'challenges', chDoc.id, 'completions'));
+      await Promise.all(compSnap.docs.map(d=>deleteDoc(d.ref)));
+      await deleteDoc(chDoc.ref);
+    }
+    const logSnap = await getDocs(collection(db, 'groups', groupId, 'activityLog'));
+    await Promise.all(logSnap.docs.map(d=>deleteDoc(d.ref)));
+    const membersSnap = await getDocs(collection(db, 'groups', groupId, 'members'));
+    await Promise.all(membersSnap.docs.map(d=>deleteDoc(d.ref)));
+    await deleteDoc(doc(db, 'groups', groupId));
+  }
+
   async function deleteGroupEntirely(){
     if(!activeGroupId || !activeGroup) return;
     const ok = ui().confirmDialog ? await ui().confirmDialog({
@@ -1296,18 +1457,8 @@ import {
     }) : confirm(`Permanently delete "${activeGroup.name}"? This cannot be undone.`);
     if(!ok) return;
 
-    const groupId = activeGroupId;
     try{
-      const challengesSnap = await getDocs(collection(db, 'groups', groupId, 'challenges'));
-      for(const chDoc of challengesSnap.docs){
-        const compSnap = await getDocs(collection(db, 'groups', groupId, 'challenges', chDoc.id, 'completions'));
-        await Promise.all(compSnap.docs.map(d=>deleteDoc(d.ref)));
-        await deleteDoc(chDoc.ref);
-      }
-      const membersSnap = await getDocs(collection(db, 'groups', groupId, 'members'));
-      await Promise.all(membersSnap.docs.map(d=>deleteDoc(d.ref)));
-      await deleteDoc(doc(db, 'groups', groupId));
-
+      await cascadeDeleteGroupData(activeGroupId);
       toast('Group deleted');
       ui().closeSheet('sheetModeration');
       closeGroup();
@@ -1496,11 +1647,32 @@ import {
   function renderActivityFeedList(){
     const container = document.getElementById('activityFeedContent');
     if(!container) return;
-    if(activityFeedItems.length===0){
-      container.innerHTML = `<p class="text-sm text-muted">No check-ins yet.</p>`;
+
+    // Merge completions (reactable) with log events (not reactable) purely
+    // at render time, sorted together chronologically — the two source
+    // arrays stay separate since only completions ever grow a reaction row.
+    const merged = [
+      ...activityFeedItems.map(i=>({...i, kind:'completion', ts:i.completedAt})),
+      ...activityLogItems.map(i=>({...i, kind:'log', ts:i.at}))
+    ].sort((a,b)=>(b.ts||0)-(a.ts||0)).slice(0, 50);
+
+    if(merged.length===0){
+      container.innerHTML = `<p class="text-sm text-muted">No activity yet.</p>`;
       return;
     }
-    container.innerHTML = activityFeedItems.map(item=>{
+
+    container.innerHTML = merged.map(item=>{
+      if(item.kind==='log'){
+        return `<div class="card mb-12">
+          <div style="display:flex; align-items:center; gap:8px;">
+            <span class="group-color-dot" style="background:${item.color||'#888'};"></span>
+            <div style="min-width:0;">
+              <div class="text-sm"><span style="font-weight:600;">${escapeHtml(firstName(item.actorName))}</span> <span style="color:var(--text-muted);">${escapeHtml(item.message)}</span></div>
+              <div class="text-sm text-faint">${relativeTime(item.ts)}</div>
+            </div>
+          </div>
+        </div>`;
+      }
       const reactions = item.reactions || {};
       const counts = {};
       Object.values(reactions).forEach(r=>{ counts[r.emoji] = (counts[r.emoji]||0)+1; });
