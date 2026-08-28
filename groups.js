@@ -74,6 +74,8 @@ import {
         listenToMyGroups();
       } else {
         myGroups = [];
+        teardownAllHomeChallengeListeners();
+        notifyHomeRefresh();
         if(document.getElementById('view-groups').classList.contains('active')) renderRoot();
       }
       // If the invite-landing panel is open (e.g. they just tapped
@@ -247,7 +249,106 @@ import {
       if(document.getElementById('view-groups').classList.contains('active') && !activeGroupId){
         renderRoot();
       }
+      syncHomeChallengeListeners();
     }, (err)=>{ console.error('groups listen failed', err); });
+  }
+
+  /* ---------------- home-screen "today" challenge cards ----------------
+     Tracked independently of whichever group is open in the Groups tab —
+     the home carousel needs every group's active-and-in-range challenge
+     plus this user's own "done today" status, live, regardless of which
+     screen they're on. Each group gets a cheap challenge listener plus,
+     only while it has a live in-range challenge, a single-document listener
+     on today's own completion doc (not the whole completions collection). */
+  let homeChallengeState = {}; // groupId -> {groupName, challenge, doneToday, challengeUnsub, completionUnsub}
+
+  function syncHomeChallengeListeners(){
+    const currentIds = new Set(myGroups.map(g=>g.id));
+    Object.keys(homeChallengeState).forEach(gid=>{
+      if(!currentIds.has(gid)){
+        teardownHomeChallengeEntry(gid);
+        delete homeChallengeState[gid];
+      }
+    });
+    myGroups.forEach(g=>{
+      if(!homeChallengeState[g.id]){
+        homeChallengeState[g.id] = {groupName:g.name, challenge:null, doneToday:false, challengeUnsub:null, completionUnsub:null};
+        attachHomeChallengeListener(g.id);
+      } else {
+        homeChallengeState[g.id].groupName = g.name;
+      }
+    });
+    notifyHomeRefresh();
+  }
+
+  function teardownHomeChallengeEntry(groupId){
+    const entry = homeChallengeState[groupId];
+    if(!entry) return;
+    if(entry.challengeUnsub) entry.challengeUnsub();
+    if(entry.completionUnsub) entry.completionUnsub();
+  }
+
+  function attachHomeChallengeListener(groupId){
+    const q = query(collection(db, 'groups', groupId, 'challenges'), where('active','==',true), limit(1));
+    const unsub = onSnapshot(q, (snap)=>{
+      const entry = homeChallengeState[groupId];
+      if(!entry) return; // group was left/torn down mid-flight
+      if(entry.completionUnsub){ entry.completionUnsub(); entry.completionUnsub = null; }
+
+      if(snap.empty){
+        entry.challenge = null;
+        notifyHomeRefresh();
+        return;
+      }
+      const ch = {id:snap.docs[0].id, ...snap.docs[0].data()};
+      const today = todayISO();
+      if(today < ch.startDate || today > ch.endDate){
+        entry.challenge = null;
+        notifyHomeRefresh();
+        return;
+      }
+      entry.challenge = ch;
+      entry.doneToday = false;
+      notifyHomeRefresh();
+
+      const compRef = doc(db, 'groups', groupId, 'challenges', ch.id, 'completions', `${today}_${currentUser.uid}`);
+      entry.completionUnsub = onSnapshot(compRef, (compSnap)=>{
+        entry.doneToday = compSnap.exists();
+        notifyHomeRefresh();
+      }, (err)=>console.error('home completion listen failed', err));
+    }, (err)=>console.error('home challenge listen failed', err));
+    homeChallengeState[groupId].challengeUnsub = unsub;
+  }
+
+  function teardownAllHomeChallengeListeners(){
+    Object.keys(homeChallengeState).forEach(teardownHomeChallengeEntry);
+    homeChallengeState = {};
+  }
+
+  function notifyHomeRefresh(){
+    if(window.GymUI && window.GymUI.refreshHomeChallengesIfVisible) window.GymUI.refreshHomeChallengesIfVisible();
+  }
+
+  // Called by app.js's home-screen carousel to get this user's active,
+  // in-range group challenges. Pure data — app.js owns the actual markup so
+  // group cards render identically to routine cards, just re-themed.
+  function getHomeChallengeCards(){
+    return Object.entries(homeChallengeState)
+      .filter(([,e])=>e.challenge)
+      .map(([groupId,e])=>({
+        groupId,
+        groupName: e.groupName,
+        title: e.challenge.title,
+        targetLabel: e.challenge.targetLabel,
+        doneToday: !!e.doneToday
+      }));
+  }
+
+  // Called when a home-screen group-challenge card is tapped — switches to
+  // the Groups tab and opens that specific group.
+  function openGroupFromHome(groupId){
+    if(window.GymUI && window.GymUI.showView) window.GymUI.showView('groups');
+    openGroup(groupId);
   }
 
   function renderRoot(){
@@ -804,5 +905,5 @@ import {
   document.addEventListener('DOMContentLoaded', init);
   if(document.readyState!=='loading') init();
 
-  window.GymGroups = { onShow };
+  window.GymGroups = { onShow, getHomeChallengeCards, openGroupFromHome };
 })();
