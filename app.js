@@ -9,7 +9,7 @@
 // stale/cached build can be identified at a glance instead of guessing —
 // if what you see on-device doesn't match what should have shipped, this
 // number tells you whether you're actually running the latest code.
-const APP_VERSION = 'v1.16.0';
+const APP_VERSION = 'v1.17.0';
 
 const STORAGE_KEY = 'gymtracker_data_v1';
 const LB_PER_KG = 2.20462;
@@ -28,6 +28,7 @@ let customExercises = [];
 // same-day "not today" choice, not data worth backing up, and naturally
 // resets on next load or the next calendar day either way.
 let dismissedTodayRoutines = new Set();
+let pendingSharedRoutine = null; // decoded {v,n,e} payload from a #routine= link, until dismissed/imported
 
 function defaultState(){
   return {
@@ -110,6 +111,199 @@ function parseISO(iso){ const [y,m,d]=iso.split('-').map(Number); return new Dat
 function sameDay(a,b){ return a.getFullYear()===b.getFullYear() && a.getMonth()===b.getMonth() && a.getDate()===b.getDate(); }
 function allExercises(){ return EXERCISE_DB.concat(state.customExercises); }
 function findExercise(id){ return allExercises().find(e=>e.id===id); }
+
+/* ---------------- ROUTINE SHARING (URL-embedded, no backend) ----------------
+   A shared routine's whole payload (name + exercise ids + supersets + rest
+   times) is base64'd straight into the link's hash fragment — no server or
+   Firestore doc needed, consistent with the rest of this app being
+   offline/local-first. Only built-in EXERCISE_DB ids are shareable (not
+   customExercises), since a custom exercise id has nothing to resolve
+   against on the recipient's device. ------------------------------------- */
+function b64EncodeUtf8(str){
+  const bytes = new TextEncoder().encode(str);
+  let bin = '';
+  bytes.forEach(b=>{ bin += String.fromCharCode(b); });
+  return btoa(bin).replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+}
+function b64DecodeUtf8(b64){
+  let s = b64.replace(/-/g,'+').replace(/_/g,'/');
+  while(s.length % 4) s += '=';
+  const bin = atob(s);
+  const bytes = Uint8Array.from(bin, c=>c.charCodeAt(0));
+  return new TextDecoder().decode(bytes);
+}
+// Encodes a template into a compact payload: {v, n, e:[[exId,restSeconds,supersetGroupIndex], ...]}.
+// Returns {b64, skippedCount} — skippedCount is how many exercises were
+// custom (unshareable) and got left out.
+function encodeShareableRoutine(t){
+  const groupMap = {};
+  let nextGroup = 0;
+  let skippedCount = 0;
+  const e = t.exIds.map((exId, idx)=>{
+    if(!EXERCISE_DB.some(d=>d.id===exId)){ skippedCount++; return null; }
+    let g = null;
+    const gid = t.supersetGroups && t.supersetGroups[idx];
+    if(gid){
+      if(!(gid in groupMap)) groupMap[gid] = nextGroup++;
+      g = groupMap[gid];
+    }
+    const rest = (t.restSeconds && t.restSeconds[idx]!=null) ? t.restSeconds[idx] : null;
+    return [exId, rest, g];
+  }).filter(Boolean);
+  const payload = {v:1, n:t.name, e};
+  return {b64: b64EncodeUtf8(JSON.stringify(payload)), skippedCount};
+}
+function decodeShareableRoutine(b64){
+  const payload = JSON.parse(b64DecodeUtf8(b64));
+  if(!payload || payload.v!==1 || !Array.isArray(payload.e)) throw new Error('Malformed routine link');
+  return payload;
+}
+function shareableRoutineLink(b64){
+  return `${location.origin}${location.pathname}#routine=${b64}`;
+}
+
+// Small QR renderer local to app.js (groups.js has its own copy — separate
+// script scope, both just call the same globally-loaded QRCode library).
+function renderAppQr(text, elId){
+  const el = document.getElementById(elId);
+  if(!el) return;
+  el.innerHTML = '';
+  if(window.QRCode){
+    new window.QRCode(el, { text, width:180, height:180, colorDark:'#0a0e0f', colorLight:'#d7e5e2' });
+  } else {
+    el.innerHTML = '<p class="text-sm text-muted">QR code unavailable offline — share the link instead.</p>';
+  }
+}
+
+function showShareRoutineSheet(templateId){
+  const t = state.templates.find(x=>x.id===templateId);
+  if(!t) return;
+  const {b64, skippedCount} = encodeShareableRoutine(t);
+  const link = shareableRoutineLink(b64);
+  document.getElementById('shareRoutineLinkText').textContent = link;
+  document.getElementById('shareRoutineNote').textContent = skippedCount>0
+    ? `Anyone who opens this link or scans this code can see the routine and import it. ${skippedCount} custom exercise${skippedCount!==1?'s':''} in it won't be included, since they only exist on your device.`
+    : 'Anyone who opens this link or scans this code can see the routine and choose to import it into their own app. No account needed.';
+  openSheet('sheetShareRoutine');
+  renderAppQr(link, 'shareRoutineQr');
+
+  document.getElementById('btnCopyRoutineLink').onclick = async ()=>{
+    try{ await navigator.clipboard.writeText(link); toast('Link copied'); }
+    catch(e){ toast('Could not copy — long-press to copy manually'); }
+  };
+  document.getElementById('btnShareRoutineNative').onclick = async ()=>{
+    if(navigator.share){
+      try{ await navigator.share({title:`"${t.name}" routine`, url:link}); }
+      catch(e){ /* user cancelled the share sheet — no action needed */ }
+    } else {
+      try{ await navigator.clipboard.writeText(link); toast('Link copied'); }
+      catch(e){ toast(link); }
+    }
+  };
+}
+
+/* ---------------- SHARED ROUTINE (import) VIEW ---------------- */
+function renderSharedRoutineView(){
+  const wrap = document.getElementById('sharedRoutineContent');
+  const payload = pendingSharedRoutine;
+  if(!payload){
+    wrap.innerHTML = `<div class="empty-state">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M18 6L6 18M6 6l12 12"/></svg>
+      <p>This routine link is invalid or has expired.</p>
+    </div>`;
+    return;
+  }
+
+  const resolved = payload.e.map(([exId, rest, grp])=>{
+    const def = findExercise(exId);
+    return def ? {exId, def, rest, grp} : null;
+  });
+  const skippedCount = resolved.filter(r=>!r).length;
+  const found = resolved.filter(Boolean);
+
+  currentMuscleMapView = 'front';
+  const highlights = computeMuscleIntensityFromExerciseIds(found.map(r=>r.exId));
+
+  wrap.innerHTML = `
+    <div class="card mb-16">
+      <div class="settings-row-label" style="font-size:19px;">${payload.n}</div>
+      <div class="text-sm text-faint mt-4">${found.length} exercise${found.length!==1?'s':''}${skippedCount>0?` · ${skippedCount} unavailable`:''}</div>
+    </div>
+    <div id="sharedRoutineMusclesMap" class="mb-16"></div>
+    <h2 class="section-label">Exercises</h2>
+    <div id="sharedRoutineExerciseList" class="mb-16"></div>
+    ${skippedCount>0 ? `<p class="text-sm text-faint mb-16">${skippedCount} exercise${skippedCount!==1?'s':''} in this routine couldn't be matched on this device and won't be imported.</p>` : ''}
+    <button class="btn btn-primary btn-block mb-8" id="btnImportSharedRoutine">Import into my routines</button>
+    <button class="btn btn-secondary btn-block" id="btnNotNowSharedRoutine">Not now</button>
+  `;
+
+  renderMuscleMapCard('sharedRoutineMusclesMap', highlights, {
+    title: 'Muscles worked',
+    emptyMessage: 'No muscle data available for this routine.'
+  });
+
+  const list = document.getElementById('sharedRoutineExerciseList');
+  if(found.length===0){
+    list.innerHTML = `<p class="text-sm text-faint" style="padding:8px 2px;">None of this routine's exercises are available on this device.</p>`;
+  } else {
+    list.innerHTML = found.map(r=>`
+      <div class="reorder-item">
+        <div class="reorder-item-top">
+          <div class="ex-icon">${r.def.icon}</div>
+          <div class="ex-info">
+            <div class="ex-name">${r.def.name}</div>
+            <div class="ex-meta">${capitalize(r.def.muscle)}${r.grp!=null?' · Superset':''}</div>
+          </div>
+          <div class="text-sm text-faint" style="flex-shrink:0;">${formatRestShort(r.rest!=null?r.rest:90)} rest</div>
+        </div>
+      </div>
+    `).join('');
+  }
+
+  document.getElementById('btnImportSharedRoutine').addEventListener('click', importSharedRoutine);
+  document.getElementById('btnNotNowSharedRoutine').addEventListener('click', dismissSharedRoutine);
+}
+
+function importSharedRoutine(){
+  if(!pendingSharedRoutine) return;
+  const payload = pendingSharedRoutine;
+  const groupIdMap = {};
+  const exIds = [], supersetGroups = [], restSeconds = [];
+
+  payload.e.forEach(([exId, rest, grp])=>{
+    if(!findExercise(exId)) return; // not available on this device — skip
+    exIds.push(exId);
+    restSeconds.push(rest!=null ? rest : null);
+    if(grp!=null){
+      if(!(grp in groupIdMap)) groupIdMap[grp] = uid();
+      supersetGroups.push(groupIdMap[grp]);
+    } else {
+      supersetGroups.push(null);
+    }
+  });
+
+  if(exIds.length===0){
+    toast('None of these exercises are available on this device');
+    return;
+  }
+
+  state.templates.push({
+    id: uid(),
+    name: payload.n,
+    exIds, supersetGroups, restSeconds,
+    scheduledDays: [],
+    createdAt: Date.now()
+  });
+  saveState();
+  toast(`Imported "${payload.n}"`);
+  pendingSharedRoutine = null;
+  showView('templates');
+}
+
+function dismissSharedRoutine(){
+  pendingSharedRoutine = null;
+  showView('home');
+}
 
 // Extracts an 11-char YouTube video ID from any common URL shape
 // (watch?v=, youtu.be/, shorts/, embed/) so we can build a thumbnail URL
@@ -209,12 +403,19 @@ function showView(name){
   });
 
   const tabbar = document.querySelector('.tabbar');
-  if(name==='workout'){
+  // Full-screen, tabbar-hidden views — 'workout' additionally gets the
+  // in-progress-session chrome (finish bar etc.), 'shared-routine' is a
+  // simple interstitial (preview/import a routine someone sent you) that
+  // just needs the tabbar out of the way, nothing session-specific.
+  if(name==='workout' || name==='shared-routine'){
     tabbar.classList.add('hidden');
+  } else {
+    tabbar.classList.remove('hidden');
+  }
+  if(name==='workout'){
     document.body.classList.add('workout-active');
     if(activeWorkout) ensureFinishBar();
   } else {
-    tabbar.classList.remove('hidden');
     document.body.classList.remove('workout-active');
     removeFinishBar();
   }
@@ -226,6 +427,7 @@ function showView(name){
   if(name==='progress') renderProgressList();
   if(name==='templates') renderTemplatesFullList();
   if(name==='groups' && window.GymGroups) window.GymGroups.onShow();
+  if(name==='shared-routine') renderSharedRoutineView();
   window.scrollTo(0,0);
 }
 
@@ -251,6 +453,8 @@ document.getElementById('btnSettings').addEventListener('click', ()=>{
   showView('settings');
   loadSettingsIntoForm();
 });
+
+document.getElementById('btnDismissSharedRoutine').addEventListener('click', dismissSharedRoutine);
 
 /* ---------------- HOME VIEW ---------------- */
 function renderHome(){
@@ -512,12 +716,15 @@ function startWorkoutFromTemplate(templateId){
   template.exIds.forEach((exId,idx)=>{
     const def = findExercise(exId);
     if(!def) return; // exercise may have been removed since template was saved
+    const restOverride = template.restSeconds && template.restSeconds[idx]!=null ? template.restSeconds[idx] : null;
     activeWorkout.exercises.push({
       exId: def.id,
       name: def.name,
       sets: [{weight:'', reps:'', difficulty:'medium', done:false}],
       notes:'',
-      supersetGroup: (template.supersetGroups && template.supersetGroups[idx]) || null
+      supersetGroup: (template.supersetGroups && template.supersetGroups[idx]) || null,
+      restDuration: restOverride,
+      restDurationCustomized: restOverride!=null
     });
   });
   toast(`Loaded "${template.name}"`);
@@ -537,23 +744,30 @@ function renderTemplatesFullList(){
   }
   const sorted = [...state.templates].sort((a,b)=>b.createdAt-a.createdAt);
   container.innerHTML = sorted.map(t=>{
-    const names = t.exIds.map(id=>{
-      const def = findExercise(id);
-      return def ? def.name : null;
-    }).filter(Boolean);
+    const defs = t.exIds.map(id=>findExercise(id)).filter(Boolean);
+    const names = defs.map(d=>d.name);
     const preview = names.slice(0,3).join(' · ');
     const more = names.length>3 ? ` +${names.length-3} more` : '';
-    return `<div class="card mb-12" data-template-card="${t.id}">
-      <div class="row" style="align-items:flex-start;">
-        <div style="flex:1; min-width:0;">
-          <div class="settings-row-label">${t.name}</div>
-          <div class="text-sm text-faint mt-4">${names.length} exercise${names.length!==1?'s':''}${preview? ' · '+preview+more : ''}</div>
+    // Representative icon: the first exercise's emoji, falling back to a
+    // generic routine glyph for an (unlikely) fully-empty routine.
+    const cardIcon = defs.length ? defs[0].icon : '🏋️';
+    return `<div class="routine-list-card" data-template-card="${t.id}">
+      <div class="routine-list-top">
+        <div class="template-icon routine-list-icon">${cardIcon}</div>
+        <div class="ex-info" style="min-width:0;">
+          <div class="ex-name">${t.name}</div>
+          <div class="ex-meta">${names.length} exercise${names.length!==1?'s':''}${preview? ' · '+preview+more : ''}</div>
+        </div>
+        <div class="routine-list-actions">
+          <button class="icon-btn" data-share-template="${t.id}" aria-label="Share routine" title="Share routine">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.6" y1="10.6" x2="15.4" y2="6.4"/><line x1="8.6" y1="13.4" x2="15.4" y2="17.6"/></svg>
+          </button>
+          <button class="icon-btn" data-edit-template="${t.id}" aria-label="Edit routine" title="Edit routine">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5z"/></svg>
+          </button>
         </div>
       </div>
-      <div class="quick-actions mt-12" style="margin-bottom:0;">
-        <button class="btn btn-primary btn-sm" style="flex:1;" data-start-template="${t.id}">Start</button>
-        <button class="btn btn-secondary btn-sm" style="flex:1;" data-edit-template="${t.id}">Edit</button>
-      </div>
+      <button class="btn btn-primary btn-sm btn-block mt-12" data-start-template="${t.id}">Start</button>
     </div>`;
   }).join('');
 
@@ -562,6 +776,9 @@ function renderTemplatesFullList(){
   });
   container.querySelectorAll('[data-edit-template]').forEach(btn=>{
     btn.addEventListener('click', ()=>openTemplateEditor(btn.dataset.editTemplate));
+  });
+  container.querySelectorAll('[data-share-template]').forEach(btn=>{
+    btn.addEventListener('click', ()=>showShareRoutineSheet(btn.dataset.shareTemplate));
   });
 }
 
@@ -582,6 +799,12 @@ function openTemplateEditor(templateId){
   // existing reorder/add/remove code above never needs to change.
   editingTemplateSupersetGroups = template && template.supersetGroups
     ? [...template.supersetGroups]
+    : editingTemplateExIds.map(()=>null);
+  // parallel array, same shape as above: null = "use the 90s session
+  // default when this routine is started", otherwise a per-exercise rest
+  // override in seconds, carried into activeWorkout when the routine loads.
+  editingTemplateRestSeconds = template && template.restSeconds
+    ? [...template.restSeconds]
     : editingTemplateExIds.map(()=>null);
   editingTemplateScheduledDays = template && template.scheduledDays ? [...template.scheduledDays] : [];
   refreshTemplateEditorSheet(template ? template.name : '');
@@ -618,6 +841,7 @@ function refreshTemplateEditorSheet(nameValue){
 
 let editingTemplateExIds = [];
 let editingTemplateSupersetGroups = [];
+let editingTemplateRestSeconds = [];
 let editingTemplateScheduledDays = [];
 
 // Returns the contiguous [start,end] index range that must move together
@@ -645,16 +869,20 @@ function moveExerciseUnit(idx, dir){
     const aboveIdx = unitStart-1;
     const unitExIds = editingTemplateExIds.splice(unitStart, unitSize);
     const unitGroups = editingTemplateSupersetGroups.splice(unitStart, unitSize);
+    const unitRest = editingTemplateRestSeconds.splice(unitStart, unitSize);
     editingTemplateExIds.splice(aboveIdx, 0, ...unitExIds);
     editingTemplateSupersetGroups.splice(aboveIdx, 0, ...unitGroups);
+    editingTemplateRestSeconds.splice(aboveIdx, 0, ...unitRest);
   } else {
     if(unitEnd>=editingTemplateExIds.length-1) return; // already at the bottom
     const unitExIds = editingTemplateExIds.splice(unitStart, unitSize);
     const unitGroups = editingTemplateSupersetGroups.splice(unitStart, unitSize);
+    const unitRest = editingTemplateRestSeconds.splice(unitStart, unitSize);
     // after removing the unit, the single item that was directly below it
     // has shifted into unitStart — reinsert the unit right after that item
     editingTemplateExIds.splice(unitStart + 1, 0, ...unitExIds);
     editingTemplateSupersetGroups.splice(unitStart + 1, 0, ...unitGroups);
+    editingTemplateRestSeconds.splice(unitStart + 1, 0, ...unitRest);
   }
 }
 
@@ -682,34 +910,44 @@ function renderTemplateEditorExerciseList(){
     // show the chain button on: any ungrouped row with a next row to offer
     // linking to, OR the top row of an existing pair (to offer unlinking)
     const showChainBtn = !isLast && !isBottomOfPair;
+    const restVal = editingTemplateRestSeconds[idx];
+    const restCustomized = restVal!=null;
 
     return `<div class="reorder-item ${isGrouped?'superset-grouped':''}" data-reorder-idx="${idx}">
-      ${isBottomOfPair
-        ? `<div class="reorder-handle reorder-handle-spacer" aria-hidden="true"></div>`
-        : `<div class="reorder-handle" data-drag-handle="${idx}" aria-label="Drag to reorder${isGrouped?' (moves the superset pair together)':''}">
-        <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg>
-      </div>`}
-      <div class="ex-icon">${def.icon}</div>
-      <div class="ex-info">
-        <div class="ex-name">${def.name}</div>
-        <div class="ex-meta">${capitalize(def.muscle)}${isGrouped?' · Superset':''}</div>
-      </div>
-      ${showChainBtn ? `
-        <button class="superset-chain-btn ${linkedWithNext?'linked':''}" data-superset-link="${idx}" aria-label="${linkedWithNext?'Unlink superset':'Link as superset with next exercise'}" title="${linkedWithNext?'Unlink superset':'Link as superset'}">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M8 7a4 4 0 0 1 4-4h1a4 4 0 0 1 0 8h-1M16 17a4 4 0 0 1-4 4h-1a4 4 0 0 1 0-8h1"/><line x1="9" y1="12" x2="15" y2="12"/></svg>
-        </button>
-      ` : ''}
-      <div class="reorder-nudge-group">
-        <button class="reorder-nudge-btn" data-nudge="${idx}:up" ${isFirst?'disabled':''} aria-label="Move up">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M18 15l-6-6-6 6"/></svg>
-        </button>
-        <button class="reorder-nudge-btn" data-nudge="${idx}:down" ${isLast?'disabled':''} aria-label="Move down">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+      <div class="reorder-item-top">
+        ${isBottomOfPair
+          ? `<div class="reorder-handle reorder-handle-spacer" aria-hidden="true"></div>`
+          : `<div class="reorder-handle" data-drag-handle="${idx}" aria-label="Drag to reorder${isGrouped?' (moves the superset pair together)':''}">
+          <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="9" cy="6" r="1.6"/><circle cx="15" cy="6" r="1.6"/><circle cx="9" cy="12" r="1.6"/><circle cx="15" cy="12" r="1.6"/><circle cx="9" cy="18" r="1.6"/><circle cx="15" cy="18" r="1.6"/></svg>
+        </div>`}
+        <div class="ex-icon">${def.icon}</div>
+        <div class="ex-info">
+          <div class="ex-name">${def.name}</div>
+          <div class="ex-meta">${capitalize(def.muscle)}${isGrouped?' · Superset':''}</div>
+        </div>
+        <button class="template-delete" data-remove-template-ex="${idx}">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6h14z"/></svg>
         </button>
       </div>
-      <button class="template-delete" data-remove-template-ex="${idx}">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M3 6h18M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2m3 0v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6h14z"/></svg>
-      </button>
+      <div class="reorder-item-actions">
+        ${showChainBtn ? `
+          <button class="superset-chain-btn ${linkedWithNext?'linked':''}" data-superset-link="${idx}" aria-label="${linkedWithNext?'Unlink superset':'Link as superset with next exercise'}" title="${linkedWithNext?'Unlink superset':'Link as superset'}">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round" stroke-linejoin="round"><path d="M8 7a4 4 0 0 1 4-4h1a4 4 0 0 1 0 8h-1M16 17a4 4 0 0 1-4 4h-1a4 4 0 0 1 0-8h1"/><line x1="9" y1="12" x2="15" y2="12"/></svg>
+          </button>
+        ` : ''}
+        <button class="ex-action-btn ${restCustomized?'rest-customized':''}" data-template-rest-picker="${idx}" title="Rest after this exercise">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>
+          ${formatRestShort(restVal!=null ? restVal : 90)}
+        </button>
+        <div class="reorder-nudge-group">
+          <button class="reorder-nudge-btn" data-nudge="${idx}:up" ${isFirst?'disabled':''} aria-label="Move up">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M18 15l-6-6-6 6"/></svg>
+          </button>
+          <button class="reorder-nudge-btn" data-nudge="${idx}:down" ${isLast?'disabled':''} aria-label="Move down">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+          </button>
+        </div>
+      </div>
     </div>`;
   }).join('');
 
@@ -718,7 +956,13 @@ function renderTemplateEditorExerciseList(){
       const idx = +e.currentTarget.dataset.removeTemplateEx;
       editingTemplateExIds.splice(idx,1);
       editingTemplateSupersetGroups.splice(idx,1);
+      editingTemplateRestSeconds.splice(idx,1);
       renderTemplateEditorExerciseList();
+    });
+  });
+  list.querySelectorAll('[data-template-rest-picker]').forEach(btn=>{
+    btn.addEventListener('click', (e)=>{
+      openRestPicker('template:' + e.currentTarget.dataset.templateRestPicker);
     });
   });
   list.querySelectorAll('[data-nudge]').forEach(btn=>{
@@ -853,12 +1097,14 @@ function onReorderPointerUp(e){
     const unitSize = unitEnd - unitStart + 1;
     const unitExIds = editingTemplateExIds.splice(unitStart, unitSize);
     const unitGroups = editingTemplateSupersetGroups.splice(unitStart, unitSize);
+    const unitRest = editingTemplateRestSeconds.splice(unitStart, unitSize);
     // currentIdx was computed against the pre-splice, single-item-tracking
     // pixel math; clamp it into the post-splice array bounds before
     // reinserting the (possibly 2-wide) unit there.
     const insertAt = Math.max(0, Math.min(editingTemplateExIds.length, currentIdx));
     editingTemplateExIds.splice(insertAt, 0, ...unitExIds);
     editingTemplateSupersetGroups.splice(insertAt, 0, ...unitGroups);
+    editingTemplateRestSeconds.splice(insertAt, 0, ...unitRest);
   }
   renderTemplateEditorExerciseList(); // clean re-render clears all inline transforms/dragging state
 }
@@ -904,6 +1150,7 @@ document.getElementById('btnSaveTemplateEdits').addEventListener('click', ()=>{
       t.name = name;
       t.exIds = [...editingTemplateExIds];
       t.supersetGroups = [...editingTemplateSupersetGroups];
+      t.restSeconds = [...editingTemplateRestSeconds];
       t.scheduledDays = [...editingTemplateScheduledDays];
     }
   } else {
@@ -912,6 +1159,7 @@ document.getElementById('btnSaveTemplateEdits').addEventListener('click', ()=>{
       name,
       exIds: [...editingTemplateExIds],
       supersetGroups: [...editingTemplateSupersetGroups],
+      restSeconds: [...editingTemplateRestSeconds],
       scheduledDays: [...editingTemplateScheduledDays],
       createdAt: Date.now()
     });
@@ -1299,13 +1547,21 @@ function renderSessionRestLabel(){
 function openRestPicker(target){
   restPickerTarget = target;
   const isSession = target==='session';
-  document.getElementById('restPickerTitle').textContent = isSession
-    ? 'Rest between sets'
-    : `Rest for ${activeWorkout.exercises[target].name}`;
+  const isTemplate = typeof target==='string' && target.startsWith('template:');
+  const templateIdx = isTemplate ? +target.slice('template:'.length) : null;
 
-  const current = isSession
-    ? (activeWorkout.restDuration || 90)
-    : (activeWorkout.exercises[target].restDuration!=null ? activeWorkout.exercises[target].restDuration : (activeWorkout.restDuration||90));
+  let current;
+  if(isSession){
+    document.getElementById('restPickerTitle').textContent = 'Rest between sets';
+    current = activeWorkout.restDuration || 90;
+  } else if(isTemplate){
+    const def = findExercise(editingTemplateExIds[templateIdx]);
+    document.getElementById('restPickerTitle').textContent = `Rest for ${def ? def.name : 'exercise'}`;
+    current = editingTemplateRestSeconds[templateIdx]!=null ? editingTemplateRestSeconds[templateIdx] : 90;
+  } else {
+    document.getElementById('restPickerTitle').textContent = `Rest for ${activeWorkout.exercises[target].name}`;
+    current = activeWorkout.exercises[target].restDuration!=null ? activeWorkout.exercises[target].restDuration : (activeWorkout.restDuration||90);
+  }
 
   document.querySelectorAll('#restPickerOptions .rest-picker-option').forEach(btn=>{
     btn.classList.toggle('active', +btn.dataset.restValue===current);
@@ -1326,8 +1582,20 @@ document.getElementById('restPickerModalBackdrop').addEventListener('click', clo
 
 document.getElementById('restPickerOptions').addEventListener('click', (e)=>{
   const btn = e.target.closest('[data-rest-value]');
-  if(!btn || !activeWorkout) return;
+  if(!btn) return;
   const seconds = +btn.dataset.restValue;
+  const isTemplate = typeof restPickerTarget==='string' && restPickerTarget.startsWith('template:');
+
+  if(isTemplate){
+    const idx = +restPickerTarget.slice('template:'.length);
+    editingTemplateRestSeconds[idx] = seconds;
+    toast(`Rest set to ${formatRestShort(seconds)}`);
+    closeRestPicker();
+    renderTemplateEditorExerciseList();
+    return;
+  }
+
+  if(!activeWorkout) return;
 
   if(restPickerTarget==='session'){
     activeWorkout.restDuration = seconds;
@@ -2157,6 +2425,7 @@ function addExerciseToTemplateDraft(exId){
   }
   editingTemplateExIds.push(exId);
   editingTemplateSupersetGroups.push(null);
+  editingTemplateRestSeconds.push(null);
   toast(`Added ${def.name}`);
   pickerMode = 'session';
   showView('templates');
@@ -3903,7 +4172,19 @@ function init(){
     activeWorkout = restored;
     startWorkoutTimer();
   }
-  showView('home');
+  // A shared-routine link lands as #routine=<payload> — decode it and open
+  // the preview/import view directly rather than going to Home first.
+  if(location.hash.startsWith('#routine=')){
+    const b64 = decodeURIComponent(location.hash.slice('#routine='.length));
+    history.replaceState(null, '', location.pathname + location.search);
+    try{
+      pendingSharedRoutine = decodeShareableRoutine(b64);
+    }catch(e){
+      console.error('Failed to decode shared routine', e);
+      pendingSharedRoutine = null;
+    }
+  }
+  showView(pendingSharedRoutine ? 'shared-routine' : 'home');
   loadSettingsIntoForm();
   waitForGymSyncThenInit();
 }
