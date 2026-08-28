@@ -477,6 +477,16 @@ import {
     document.getElementById('btnChallengeHistory').addEventListener('click', showChallengeHistorySheet);
     document.getElementById('btnActivityFeed').addEventListener('click', showActivityFeedSheet);
     document.getElementById('btnLeaderboard').addEventListener('click', showLeaderboardSheet);
+    document.getElementById('btnGroupMenu').addEventListener('click', ()=>toggleGroupMenu(true));
+    document.getElementById('groupMenuBackdrop').addEventListener('click', ()=>toggleGroupMenu(false));
+    // Any actual menu item (not just the backdrop) should also close the
+    // dropdown after firing its own action — the specific click handlers
+    // for each item (History, Moderation, etc.) are wired separately below;
+    // this is purely about closing the menu, via event delegation so it
+    // doesn't matter which item was tapped.
+    document.getElementById('groupMenuDropdown').addEventListener('click', (e)=>{
+      if(e.target.closest('.group-menu-item')) toggleGroupMenu(false);
+    });
     document.getElementById('btnModeration').addEventListener('click', showModerationSheet);
     document.getElementById('btnModSaveName').addEventListener('click', saveGroupRename);
     document.getElementById('btnModRegenerateInvite').addEventListener('click', regenerateInviteCode);
@@ -782,6 +792,26 @@ import {
   }
 
   /* ---------------- group detail ---------------- */
+  // Anchors the overflow-menu dropdown just under the burger button,
+  // computed fresh each open so it stays correctly placed regardless of
+  // scroll position or viewport size.
+  function toggleGroupMenu(show){
+    const dropdown = document.getElementById('groupMenuDropdown');
+    const backdrop = document.getElementById('groupMenuBackdrop');
+    if(show){
+      const btn = document.getElementById('btnGroupMenu');
+      const rect = btn.getBoundingClientRect();
+      dropdown.style.top = (rect.bottom + 8) + 'px';
+      dropdown.style.right = (window.innerWidth - rect.right) + 'px';
+      backdrop.classList.add('open');
+      dropdown.classList.add('open');
+    } else {
+      backdrop.classList.remove('open');
+      dropdown.classList.remove('open');
+    }
+  }
+
+
   async function openGroup(groupId){
     activeGroupId = groupId;
     calCursor = new Date();
