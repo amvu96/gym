@@ -9,7 +9,7 @@
 // stale/cached build can be identified at a glance instead of guessing —
 // if what you see on-device doesn't match what should have shipped, this
 // number tells you whether you're actually running the latest code.
-const APP_VERSION = 'v1.21.0';
+const APP_VERSION = 'v1.23.0';
 
 const STORAGE_KEY = 'gymtracker_data_v1';
 const LB_PER_KG = 2.20462;
@@ -527,9 +527,12 @@ function renderTodayRoutineSuggestion(){
   // Group challenges the person's group(s) have active today — sourced from
   // groups.js, which owns the live Firestore listeners this needs. Shown in
   // the same carousel as routine suggestions, visually distinguished (red)
-  // rather than as a separate section.
-  const groupCards = (window.GymGroups && window.GymGroups.getHomeChallengeCards)
-    ? window.GymGroups.getHomeChallengeCards() : [];
+  // rather than as a separate section. Dismiss key is per (group, challenge)
+  // pair, not just group, since one group can have several active
+  // challenges now — dismissing one shouldn't hide the others.
+  const groupCards = ((window.GymGroups && window.GymGroups.getHomeChallengeCards)
+    ? window.GymGroups.getHomeChallengeCards() : [])
+    .filter(g=>!dismissedTodayRoutines.has(`group-${g.groupId}-${g.challengeId}`));
 
   if(scheduled.length===0 && groupCards.length===0){
     wrap.style.display = 'none';
@@ -567,6 +570,9 @@ function renderTodayRoutineSuggestion(){
       `).join('')}
       ${groupCards.map(g=>`
         <div class="today-routine-card group-challenge">
+          <button class="today-routine-dismiss" data-dismiss-today-routine="group-${g.groupId}-${g.challengeId}" aria-label="Not today">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+          </button>
           <div class="today-routine-label">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="7" r="4"/><path d="M2 21v-2a4 4 0 0 1 4-4h6a4 4 0 0 1 4 4v2"/><circle cx="17" cy="7" r="3"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/></svg>
             Group challenge · ${escapeHtmlLocal(g.groupName)}
