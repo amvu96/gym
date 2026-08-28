@@ -50,8 +50,6 @@ import {
   let calCursor = new Date();
   let seenCompletionKeys = new Set(); // to only notify on genuinely new check-ins
   let notifiedThisSession = false; // guards the initial snapshot burst
-  let activeNtfyConfig = null; // {server, topic, token?} or null if not configured
-  let ntfyConfigUnsub = null;
 
   /* ---------------- small local date helpers (kept independent of app.js) ---------------- */
   function fmtISO(d){ return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
@@ -454,6 +452,25 @@ import {
     return out;
   }
 
+  // Deterministic-prefix, random-suffix ntfy topic, generated once per group
+  // at creation and never editable afterward — e.g.
+  // "gymnullvaulteu-morning-crew-a1b2c3". The prefix identifies it as
+  // belonging to this app (so it doesn't collide with unrelated public
+  // topics on ntfy.sh), the slug keeps it human-recognizable, and the
+  // random suffix keeps it unguessable enough to act as ntfy's de facto
+  // access gate (ntfy topics have no real auth by default).
+  function slugify(s){
+    return String(s||'')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 40) || 'group';
+  }
+  function randomNtfyTopic(groupName){
+    const suffix = Array.from({length:8}, ()=>'abcdefghijklmnopqrstuvwxyz0123456789'[Math.floor(Math.random()*36)]).join('');
+    return `gymnullvaulteu-${slugify(groupName)}-${suffix}`;
+  }
+
   async function createGroup(){
     const name = document.getElementById('newGroupNameInput').value.trim();
     if(!name){ toast('Give the group a name'); return; }
@@ -465,6 +482,7 @@ import {
         ownerUid: currentUser.uid,
         ownerName: currentUser.name || 'Owner',
         inviteCode,
+        ntfyTopic: randomNtfyTopic(name),
         createdAt: Date.now(),
         memberUids: [currentUser.uid]
       });
@@ -610,44 +628,32 @@ import {
   }
 
   /* ---------------- ntfy.sh push notifications ----------------
-     Fully client-side, no backend of ours needed: the group owner points
-     the group at an ntfy topic (their own, on ntfy.sh or self-hosted, with
-     an optional bearer token for protected/self-hosted topics), and
-     whichever member checks in POSTs a message straight to that topic.
-     Anyone who's subscribed to the topic in the ntfy app gets a real push
-     notification — even with this app fully closed — which is the one
-     thing the in-app Firestore-listener notifications above can't do.
-     Config lives in a members-only-read subcollection (see firestore.rules)
-     since the "groups" doc itself is publicly readable and a token there
-     would leak to anyone with the invite link, joined or not. */
-  function listenToNtfyConfig(){
-    const ref = doc(db, 'groups', activeGroupId, 'settings', 'ntfy');
-    ntfyConfigUnsub = onSnapshot(ref, (snap)=>{
-      activeNtfyConfig = snap.exists() ? snap.data() : null;
-    }, (err)=>console.error('ntfy config listen failed', err));
+     Fully client-side, no backend of ours needed. Each group gets one
+     fixed topic, generated once at creation time (see randomNtfyTopic())
+     and stored on the group doc — not owner-editable, no server/token
+     fields. Whichever member checks in POSTs a message straight to
+     https://ntfy.sh/<topic>; anyone subscribed (via the ntfy app, or just
+     ntfy.sh in a browser with background notifications enabled — no app
+     install required either way) gets a real push, even with this app
+     fully closed. That's the one thing the in-app Firestore-listener
+     notifications above can't do. */
+  function ntfySubscribeLink(topic){
+    return `https://ntfy.sh/${encodeURIComponent(topic)}`;
   }
 
-  async function publishNtfy(config, {title, message, tags}){
-    if(!config || !config.topic) return;
-    const server = (config.server || 'https://ntfy.sh').replace(/\/+$/, '');
-    const headers = {'Content-Type': 'application/json'};
-    if(config.token) headers['Authorization'] = `Bearer ${config.token}`;
+  async function publishNtfy(topic, {title, message, tags}){
+    if(!topic) return;
     try{
-      await fetch(server + '/', {
+      await fetch('https://ntfy.sh/', {
         method: 'POST',
-        headers,
-        body: JSON.stringify({ topic: config.topic, title, message, tags: tags||[] })
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({ topic, title, message, tags: tags||[] })
       });
     }catch(e){
       // Never block/interrupt the check-in flow over a notification
       // delivery failure — the completion itself already saved.
       console.error('ntfy publish failed', e);
     }
-  }
-
-  function ntfySubscribeLink(config){
-    const server = (config.server || 'https://ntfy.sh').replace(/\/+$/, '');
-    return `${server}/${encodeURIComponent(config.topic)}`;
   }
 
   function showNtfySettingsSheet(){
@@ -659,99 +665,41 @@ import {
   function renderNtfySettingsSheet(){
     const isOwner = currentUser && activeGroup && activeGroup.ownerUid === currentUser.uid;
     const content = document.getElementById('ntfySettingsContent');
-    const cfg = activeNtfyConfig;
+    const topic = activeGroup ? activeGroup.ntfyTopic : null;
+    const link = topic ? ntfySubscribeLink(topic) : null;
 
-    if(isOwner){
-      content.innerHTML = `
-        <p class="text-sm text-muted mb-16">Uses <a href="https://ntfy.sh" target="_blank" rel="noopener" style="color:var(--accent);">ntfy.sh</a> (or your own server) to send a real push notification — even with this app closed — whenever a member checks in. Pick a hard-to-guess topic name; anyone who knows it can subscribe or publish to it.</p>
-        <div class="field" style="margin-bottom:16px;">
-          <label>Server</label>
-          <input type="text" id="ntfyServerInput" placeholder="https://ntfy.sh" value="${escapeHtml(cfg?cfg.server||'https://ntfy.sh':'https://ntfy.sh')}">
-        </div>
-        <div class="field" style="margin-bottom:16px;">
-          <label>Topic</label>
-          <input type="text" id="ntfyTopicInput" placeholder="e.g. morning-crew-x7q2" value="${escapeHtml(cfg?cfg.topic||'':'')}" autocomplete="off">
-        </div>
-        <div class="field" style="margin-bottom:16px;">
-          <label>Access token (optional — protected/self-hosted topics)</label>
-          <input type="text" id="ntfyTokenInput" placeholder="tk_…" value="${escapeHtml(cfg?cfg.token||'':'')}" autocomplete="off">
-        </div>
-        <button class="btn btn-primary btn-block mb-8" id="btnSaveNtfyConfig">Save</button>
-        <button class="btn btn-secondary btn-block mb-8" id="btnTestNtfyConfig">Send test notification</button>
-        ${cfg ? '<button class="btn btn-secondary btn-block mb-16" id="btnDisableNtfyConfig" style="border-color:var(--danger-dim); color:var(--danger);">Turn off</button>' : ''}
-        ${cfg ? `
-          <p class="text-sm text-muted mb-8">Members can subscribe from this same screen — open the ntfy app and scan, or open the link.</p>
-          <div class="invite-qr-wrap"><div id="ntfySubscribeQr"></div></div>
-          <div class="invite-link-box">${escapeHtml(ntfySubscribeLink(cfg))}</div>
-        ` : ''}
-      `;
-      document.getElementById('btnSaveNtfyConfig').addEventListener('click', saveNtfyConfig);
-      document.getElementById('btnTestNtfyConfig').addEventListener('click', sendTestNtfyNotification);
-      const disableBtn = document.getElementById('btnDisableNtfyConfig');
-      if(disableBtn) disableBtn.addEventListener('click', disableNtfyConfig);
-      if(cfg) renderQr(ntfySubscribeLink(cfg), 'ntfySubscribeQr');
-    } else {
-      if(!cfg){
-        content.innerHTML = `<p class="text-sm text-muted">The group owner hasn't turned on push notifications for this group yet.</p>`;
-        return;
-      }
-      content.innerHTML = `
-        <p class="text-sm text-muted mb-16">Get a real push notification — even with this app closed — whenever a teammate completes today's challenge. Install the <a href="https://ntfy.sh" target="_blank" rel="noopener" style="color:var(--accent);">ntfy app</a>, then scan or open this to subscribe:</p>
-        <div class="invite-qr-wrap"><div id="ntfySubscribeQr"></div></div>
-        <div class="invite-link-box">${escapeHtml(ntfySubscribeLink(cfg))}</div>
-        <button class="btn btn-primary btn-block" id="btnCopyNtfyLink">Copy link</button>
-      `;
-      renderQr(ntfySubscribeLink(cfg), 'ntfySubscribeQr');
-      document.getElementById('btnCopyNtfyLink').addEventListener('click', async ()=>{
-        try{ await navigator.clipboard.writeText(ntfySubscribeLink(cfg)); toast('Link copied'); }
-        catch(e){ toast('Could not copy — long-press to copy manually'); }
-      });
+    if(!topic){
+      // Every group created going forward gets a topic automatically; this
+      // only shows for groups created before this feature existed.
+      content.innerHTML = `<p class="text-sm text-muted">Push notifications aren't available for this group — it was created before this feature existed.</p>`;
+      return;
     }
-  }
 
-  async function saveNtfyConfig(){
-    const server = document.getElementById('ntfyServerInput').value.trim() || 'https://ntfy.sh';
-    const topic = document.getElementById('ntfyTopicInput').value.trim();
-    const token = document.getElementById('ntfyTokenInput').value.trim();
-    if(!topic){ toast('Enter a topic name'); return; }
-    try{
-      await setDoc(doc(db, 'groups', activeGroupId, 'settings', 'ntfy'), {
-        server, topic, token: token || null,
-        updatedBy: currentUser.uid, updatedAt: Date.now()
-      });
-      toast('Push notifications configured');
-      renderNtfySettingsSheet();
-    }catch(e){
-      console.error(e);
-      toast('Could not save — try again');
-    }
-  }
-
-  async function sendTestNtfyNotification(){
-    const server = document.getElementById('ntfyServerInput').value.trim() || 'https://ntfy.sh';
-    const topic = document.getElementById('ntfyTopicInput').value.trim();
-    const token = document.getElementById('ntfyTokenInput').value.trim();
-    if(!topic){ toast('Enter a topic name first'); return; }
-    await publishNtfy({server, topic, token}, {
-      title: activeGroup.name,
-      message: 'Test notification from Gym Tracker 👋',
-      tags: ['bell']
+    content.innerHTML = `
+      <p class="text-sm text-muted mb-16">Get a real push notification — even with this app closed — whenever a teammate completes today's challenge. No app install required: open this group's ntfy page and tap <b>Subscribe</b>, then enable <b>background notifications</b> right there in the browser. (The <a href="https://ntfy.sh" target="_blank" rel="noopener" style="color:var(--accent);">ntfy app</a> works too, if you'd rather use it.)</p>
+      <div class="invite-qr-wrap"><div id="ntfySubscribeQr"></div></div>
+      <div class="invite-link-box">${escapeHtml(link)}</div>
+      <button class="btn btn-primary btn-block mb-8" id="btnOpenNtfyLink">Open ntfy.sh in a new tab</button>
+      <button class="btn btn-secondary btn-block" id="btnCopyNtfyLink">Copy link</button>
+      ${isOwner ? `<button class="btn btn-secondary btn-block mt-8" id="btnTestNtfyConfig">Send test notification</button>` : ''}
+    `;
+    renderQr(link, 'ntfySubscribeQr');
+    document.getElementById('btnOpenNtfyLink').addEventListener('click', ()=>{
+      window.open(link, '_blank', 'noopener');
     });
-    toast('Test sent — check the ntfy app');
-  }
-
-  async function disableNtfyConfig(){
-    const ok = ui().confirmDialog ? await ui().confirmDialog({
-      title:'Turn off push notifications?', message:'Members will stop getting ntfy alerts for this group.', confirmLabel:'Turn off', danger:true
-    }) : confirm('Turn off push notifications for this group?');
-    if(!ok) return;
-    try{
-      await deleteDoc(doc(db, 'groups', activeGroupId, 'settings', 'ntfy'));
-      toast('Push notifications turned off');
-      renderNtfySettingsSheet();
-    }catch(e){
-      console.error(e);
-      toast('Could not turn off — try again');
+    document.getElementById('btnCopyNtfyLink').addEventListener('click', async ()=>{
+      try{ await navigator.clipboard.writeText(link); toast('Link copied'); }
+      catch(e){ toast('Could not copy — long-press to copy manually'); }
+    });
+    if(isOwner){
+      document.getElementById('btnTestNtfyConfig').addEventListener('click', async ()=>{
+        await publishNtfy(topic, {
+          title: activeGroup.name,
+          message: 'Test notification from Gym Tracker 👋',
+          tags: ['bell']
+        });
+        toast('Test sent');
+      });
     }
   }
 
@@ -784,21 +732,18 @@ import {
     });
 
     listenToActiveChallenge();
-    listenToNtfyConfig();
   }
 
   function teardownDetailListeners(){
     if(membersUnsub){ membersUnsub(); membersUnsub = null; }
     if(challengeUnsub){ challengeUnsub(); challengeUnsub = null; }
     if(completionsUnsub){ completionsUnsub(); completionsUnsub = null; }
-    if(ntfyConfigUnsub){ ntfyConfigUnsub(); ntfyConfigUnsub = null; }
   }
 
   function closeGroup(){
     teardownDetailListeners();
     activeGroupId = null; activeGroup = null; activeMembers = []; activeChallenge = null;
     completionsByDate = {};
-    activeNtfyConfig = null;
     renderRoot();
   }
 
@@ -978,8 +923,8 @@ import {
         completedAt: Date.now()
       });
       toast('Nice work — marked done for today');
-      if(activeNtfyConfig){
-        publishNtfy(activeNtfyConfig, {
+      if(activeGroup && activeGroup.ntfyTopic){
+        publishNtfy(activeGroup.ntfyTopic, {
           title: activeGroup.name,
           message: `${firstName(currentUser.name)} completed today's challenge: ${activeChallenge.title}`,
           tags: ['fire']
