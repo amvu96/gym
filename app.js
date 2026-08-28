@@ -9,7 +9,7 @@
 // stale/cached build can be identified at a glance instead of guessing —
 // if what you see on-device doesn't match what should have shipped, this
 // number tells you whether you're actually running the latest code.
-const APP_VERSION = 'v1.15.0';
+const APP_VERSION = 'v1.16.0';
 
 const STORAGE_KEY = 'gymtracker_data_v1';
 const LB_PER_KG = 2.20462;
@@ -284,7 +284,9 @@ function renderHome(){
   document.getElementById('weekRingFg').style.strokeDashoffset = circumference*(1-pct);
   document.getElementById('weekRingPct').textContent = Math.round(pct*100)+'%';
 
-  // week days strip (Mon-Sun of current week)
+  // week days strip (Mon-Sun of current week) — tapping any day opens the
+  // Calendar view (no longer its own bottom-nav tab) scrolled to that day's
+  // month, since Progress took Calendar's slot in the tabbar.
   const strip = document.getElementById('weekDaysStrip');
   strip.innerHTML = '';
   const dow = ['M','T','W','T','F','S','S'];
@@ -296,6 +298,10 @@ function renderHome(){
     const el = document.createElement('div');
     el.className = 'week-day' + (has?' done':'') + (sameDay(d,now)?' today':'');
     el.textContent = dow[i];
+    el.addEventListener('click', ()=>{
+      calCursor = new Date(d);
+      showView('calendar');
+    });
     strip.appendChild(el);
   }
 
