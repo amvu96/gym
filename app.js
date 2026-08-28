@@ -9,7 +9,7 @@
 // stale/cached build can be identified at a glance instead of guessing —
 // if what you see on-device doesn't match what should have shipped, this
 // number tells you whether you're actually running the latest code.
-const APP_VERSION = 'v1.14.0';
+const APP_VERSION = 'v1.15.0';
 
 const STORAGE_KEY = 'gymtracker_data_v1';
 const LB_PER_KG = 2.20462;
@@ -225,6 +225,7 @@ function showView(name){
   if(name==='log') renderExerciseLibrary();
   if(name==='progress') renderProgressList();
   if(name==='templates') renderTemplatesFullList();
+  if(name==='groups' && window.GymGroups) window.GymGroups.onShow();
   window.scrollTo(0,0);
 }
 
@@ -3876,6 +3877,23 @@ init();
 // behavior; it's purely a read-only window onto functions that already
 // exist above, so tests exercise the real implementation instead of a copy
 // that could silently drift out of sync with it.
+// Small shared-UI hooks so independent modules (groups.js) can reuse the
+// app's existing toast/confirm/sheet/nav primitives instead of duplicating
+// them — keeps group-challenge UI visually and behaviorally consistent with
+// the rest of the app without coupling groups.js to app.js's internals.
+if(typeof window !== 'undefined'){
+  window.GymUI = {
+    toast,
+    confirmDialog,
+    openSheet,
+    closeSheet,
+    showView,
+    fmtDateISO,
+    parseISO,
+    todayISO
+  };
+}
+
 if(typeof window !== 'undefined'){
   window.__gymTrackerTestHooks = {
     estimateSetKcal,
