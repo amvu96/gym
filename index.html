@@ -1174,6 +1174,7 @@ body.workout-active{padding-bottom:calc(96px + env(safe-area-inset-bottom));}
 .toggle{
   width:44px; height:26px; border-radius:99px; background:var(--input-bg);
   border:1px solid var(--border); position:relative; transition:background .2s, border-color .2s;
+  flex-shrink:0; touch-action:manipulation;
 }
 .toggle.on{background:var(--accent-dim); border-color:var(--accent);}
 .toggle::after{
