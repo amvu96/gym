@@ -2249,8 +2249,27 @@ import {
     return String(s||'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
   }
 
-  document.addEventListener('DOMContentLoaded', init);
-  if(document.readyState!=='loading') init();
+  // groups.js is a `<script type="module">`, which the spec always defers —
+  // it only executes after the document has finished parsing. By that
+  // point `document.readyState` is already 'interactive', not 'loading',
+  // so the `if` check below fires init() immediately... but DOMContentLoaded
+  // hasn't actually dispatched yet at that moment (it fires *after*
+  // deferred/module scripts finish), so the listener on the line above
+  // *also* fires init() a moment later. Net effect: init() — and every
+  // click handler wired up inside it — ran twice on every load. Most
+  // things absorbed that silently (opening a sheet twice is harmless,
+  // re-setting the same value twice is harmless), but anything that
+  // *flips* a boolean each call would flip it on, then immediately back
+  // off, in the same tick — invisible net effect, which is exactly the
+  // "Require photo" toggle bug this guard fixes.
+  let initialized = false;
+  function guardedInit(){
+    if(initialized) return;
+    initialized = true;
+    init();
+  }
+  document.addEventListener('DOMContentLoaded', guardedInit);
+  if(document.readyState!=='loading') guardedInit();
 
   window.GymGroups = { onShow, getHomeChallengeCards, openGroupFromHome };
 })();
