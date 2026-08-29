@@ -218,6 +218,20 @@ export class MuscleMap {
 
   applyImage() {
     const src = this.resolveBodySrc();
+    // The body illustration loads asynchronously; without this, the
+    // muscle-highlight overlay (already in the DOM with its opacity set)
+    // paints on the very next frame regardless, so red shapes flash over a
+    // blank background for a moment before the image pops in underneath.
+    // Hiding the whole SVG until the image actually finishes loading (or
+    // fails to — the error listener still reveals it, so a broken/slow
+    // load never leaves the map permanently blank) fixes both the initial
+    // mount and switching front/back view, which swaps the image and the
+    // highlight paths together via this same method.
+    this.svg.style.visibility = 'hidden';
+    const reveal = () => { if (!this.destroyed) this.svg.style.visibility = ''; };
+    this.image.addEventListener('load', reveal, { once: true });
+    this.image.addEventListener('error', reveal, { once: true });
+    setTimeout(reveal, 1500); // safety net in case neither event ever fires
     this.image.setAttribute('href', src);
     this.image.setAttributeNS(XLINK_NS, 'xlink:href', src);
   }
