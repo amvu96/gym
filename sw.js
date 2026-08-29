@@ -6,7 +6,7 @@
    imports from gstatic.com) are left alone entirely — never cached, always
    fetched normally, since caching third-party CDN code here isn't useful. */
 
-const CACHE_NAME = 'gym-tracker-cache-v34';
+const CACHE_NAME = 'gym-tracker-cache-v35';
 const ASSETS = [
   './',
   './index.html',
