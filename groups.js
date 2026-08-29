@@ -452,6 +452,11 @@ import {
 
     document.getElementById('btnBackToGroups').addEventListener('click', closeGroup);
     document.getElementById('btnInviteMembers').addEventListener('click', showInviteSheet);
+    document.getElementById('btnOpenTelegramGroup').addEventListener('click', ()=>{
+      if(activeGroup && activeGroup.telegramGroupLink){
+        window.open(activeGroup.telegramGroupLink, '_blank', 'noopener');
+      }
+    });
     document.getElementById('btnNtfySettings').addEventListener('click', showNtfySettingsSheet);
     document.getElementById('btnLeaveGroup').addEventListener('click', leaveActiveGroup);
 
@@ -507,6 +512,8 @@ import {
     document.getElementById('btnModeration').addEventListener('click', showModerationSheet);
     document.getElementById('btnModSaveName').addEventListener('click', saveGroupRename);
     document.getElementById('btnModRegenerateInvite').addEventListener('click', regenerateInviteCode);
+    document.getElementById('btnModSaveTelegram').addEventListener('click', saveTelegramSettings);
+    document.getElementById('btnModTestTelegram').addEventListener('click', testTelegramMessage);
     document.getElementById('btnModDeleteGroup').addEventListener('click', deleteGroupEntirely);
 
     document.getElementById('calGroupPrevMonth').addEventListener('click', ()=>{
@@ -910,6 +917,8 @@ import {
     document.getElementById('groupDetailName').textContent = activeGroup.name;
     document.getElementById('btnModeration').style.display =
       (currentUser && activeGroup.ownerUid===currentUser.uid) ? '' : 'none';
+    document.getElementById('btnOpenTelegramGroup').style.display =
+      activeGroup.telegramGroupLink ? '' : 'none';
 
     teardownDetailListeners();
 
@@ -1317,6 +1326,10 @@ import {
           tags: ['fire']
         });
       }
+      if(activeGroup && activeGroup.telegramWorkerUrl){
+        publishTelegram(activeGroup.telegramWorkerUrl,
+          `🎉 Congrats ${firstName(currentUser.name)} for finishing today's challenge: ${ch.title}! Feel free to share a photo 📸`);
+      }
     }catch(e){
       console.error(e);
       toast('Could not save — try again');
@@ -1351,6 +1364,8 @@ import {
   function showModerationSheet(){
     if(!activeGroupId || !activeGroup) return;
     document.getElementById('modGroupNameInput').value = activeGroup.name;
+    document.getElementById('modTelegramWorkerInput').value = activeGroup.telegramWorkerUrl || '';
+    document.getElementById('modTelegramGroupLinkInput').value = activeGroup.telegramGroupLink || '';
     renderModMembersList();
     ui().openSheet('sheetModeration');
   }
@@ -1414,6 +1429,53 @@ import {
       console.error(e);
       toast('Could not regenerate invite code');
     }
+  }
+
+  /* ---------------- Telegram integration (owner-configured) ----------------
+     Telegram's Bot API has no CORS support, so unlike ntfy this can't be a
+     direct browser call — it goes through a small Cloudflare Worker the
+     owner deploys themselves (see TELEGRAM_SETUP.md), which holds the bot
+     token and chat ID as its own secrets. This app only ever sends the
+     message text to that Worker's URL; it never sees or stores the token
+     or the chat ID at all. */
+  async function publishTelegram(workerUrl, text){
+    if(!workerUrl) return;
+    try{
+      await fetch(workerUrl, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({text})
+      });
+    }catch(e){
+      // Same principle as the ntfy publish — never let a notification
+      // delivery failure block or roll back the actual action.
+      console.error('telegram publish failed', e);
+    }
+  }
+
+  async function saveTelegramSettings(){
+    const workerUrl = document.getElementById('modTelegramWorkerInput').value.trim();
+    const groupLink = document.getElementById('modTelegramGroupLinkInput').value.trim();
+    try{
+      await updateDoc(doc(db, 'groups', activeGroupId), {
+        telegramWorkerUrl: workerUrl || null,
+        telegramGroupLink: groupLink || null
+      });
+      activeGroup.telegramWorkerUrl = workerUrl || null;
+      activeGroup.telegramGroupLink = groupLink || null;
+      document.getElementById('btnOpenTelegramGroup').style.display = groupLink ? '' : 'none';
+      toast('Telegram settings saved');
+    }catch(e){
+      console.error(e);
+      toast('Could not save Telegram settings');
+    }
+  }
+
+  async function testTelegramMessage(){
+    const workerUrl = document.getElementById('modTelegramWorkerInput').value.trim();
+    if(!workerUrl){ toast('Enter your Cloudflare Worker URL first'); return; }
+    await publishTelegram(workerUrl, `Test message from ${activeGroup.name} 👋 — if you can see this, it's working!`);
+    toast('Test sent — check your Telegram group');
   }
 
   // Deliberate hand-off, initiated by the current owner, while they stay a
