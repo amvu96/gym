@@ -1184,6 +1184,22 @@ body.workout-active{padding-bottom:calc(96px + env(safe-area-inset-bottom));}
 .toggle.on::after{transform:translateX(18px); background:var(--accent); box-shadow:0 0 6px var(--accent-glow);}
 .toggle:disabled{opacity:0.4; cursor:not-allowed;}
 
+/* Plain link-style control, deliberately not built on .toggle — used where
+   a pill-switch inside a bottom sheet wasn't reliably tappable. */
+.require-photo-link{
+  display:flex; align-items:center; justify-content:space-between; gap:12px;
+  width:100%; background:none; border:none; border-bottom:1px solid var(--border-soft);
+  padding:14px 4px; margin-bottom:8px; font-family:inherit; text-align:left;
+  color:var(--text); font-size:13.5px; font-weight:600;
+}
+.require-photo-link-state{
+  font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:0.04em;
+  color:var(--text-faint); text-decoration:underline;
+}
+.require-photo-link-state.on{color:var(--accent);}
+.require-photo-link:disabled{opacity:0.4; cursor:not-allowed;}
+.require-photo-link:disabled .require-photo-link-state{text-decoration:none;}
+
 /* ============ MODAL / SHEET ============ */
 .sheet-backdrop{
   position:fixed; inset:0; background:rgba(0,0,0,0.6); z-index:90;
@@ -1901,10 +1917,10 @@ body.sheet-open{overflow:hidden;}
     <label>End date</label>
     <input type="date" id="challengeEndInput">
   </div>
-  <div class="settings-row mb-8" id="challengeRequirePhotoRow">
-    <div class="settings-row-label">Require photo to mark done</div>
-    <button class="toggle" id="challengeRequirePhotoToggle" disabled></button>
-  </div>
+  <button type="button" class="require-photo-link" id="challengeRequirePhotoToggle" disabled>
+    <span>Require photo to mark done</span>
+    <span class="require-photo-link-state" id="challengeRequirePhotoState">Off</span>
+  </button>
   <p class="text-sm text-faint mb-16" id="challengeRequirePhotoNote">Set up Telegram integration in Moderation first — this needs somewhere to send the photos.</p>
   <p class="text-sm text-faint mb-16">Multiple challenges can run at once — this adds a new one alongside any others already active.</p>
   <button class="btn btn-primary btn-block" id="btnConfirmNewChallenge">Start challenge</button>
