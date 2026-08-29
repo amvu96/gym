@@ -44,7 +44,17 @@ import {
   let activeMembers = []; // [{uid, displayName, color, ...}]
   let activeChallenges = []; // all currently-active (not-yet-ended) challenges for this group
   let selectedCalendarChallengeId = null; // which active challenge the calendar below is showing
-  let challengeCompletions = {}; // challengeId -> {byDate:{date:[{uid,displayName,color,date}]}, seenKeys, notified, unsub}
+  let challengeCompletions = {}; // challengeId -> {byDate:{date:[{uid,displayName,color,date}]}, seenKeys, notified, unsub, loadedOnce}
+  // Gates the very first render of the group screen behind "all three initial
+  // loads (members, challenges, each active challenge's completions) have
+  // landed at least once" — otherwise each Firestore listener resolving on
+  // its own schedule pops sections in one at a time (member row, then empty
+  // challenge cards, then cards filling in with progress) which reads as
+  // jitter. Live updates *after* this initial reveal apply immediately as
+  // normal; this only smooths the first paint.
+  let groupDetailReady = false;
+  let membersLoadedOnce = false;
+  let challengesLoadedOnce = false;
   let membersUnsub = null;
   let challengeUnsub = null;
   let calCursor = new Date();
@@ -134,6 +144,11 @@ import {
     document.getElementById('groupsPanelInvite').style.display = 'none';
     document.getElementById('groupsPanelDetail').style.display = '';
     document.getElementById('groupDetailName').textContent = activeGroup ? activeGroup.name : '—';
+    // Listeners are still running from before (we never actually left the
+    // group), so data's already loaded — just show it directly rather than
+    // flashing the loading skeleton again.
+    document.getElementById('groupDetailSkeleton').style.display = groupDetailReady ? 'none' : '';
+    document.getElementById('groupDetailBody').style.display = groupDetailReady ? '' : 'none';
     renderMembersRow();
     renderChallengesList();
     renderCalendarChallengeSelector();
@@ -880,6 +895,15 @@ import {
     document.getElementById('groupChallengesList').innerHTML = '';
     document.getElementById('calGroupGrid').innerHTML = '';
 
+    // Show one clean loading state instead of the real content sections —
+    // those get built up in the background as listeners land, then
+    // revealed all at once by maybeRevealGroupDetail() below.
+    groupDetailReady = false;
+    membersLoadedOnce = false;
+    challengesLoadedOnce = false;
+    document.getElementById('groupDetailSkeleton').style.display = '';
+    document.getElementById('groupDetailBody').style.display = 'none';
+
     const gSnap = await getDoc(doc(db, 'groups', groupId));
     if(!gSnap.exists()){ toast('Group not found'); closeGroup(); return; }
     activeGroup = {id:groupId, ...gSnap.data()};
@@ -891,10 +915,12 @@ import {
 
     membersUnsub = onSnapshot(collection(db, 'groups', groupId, 'members'), (snap)=>{
       activeMembers = snap.docs.map(d=>d.data()).sort((a,b)=>a.colorIndex-b.colorIndex);
+      membersLoadedOnce = true;
       renderMembersRow();
       renderGroupCalendar(); // legend depends on members
       renderActivityBadge();
       healOwnMemberDoc();
+      maybeRevealGroupDetail();
     });
 
     listenToActiveChallenges();
@@ -902,7 +928,9 @@ import {
     // Live "transparency log" — rename, join/leave, kick, ownership
     // changes, challenge start/end. Single-field orderBy+limit needs no
     // composite index. Kept separate from activityFeedItems (completions)
-    // since only completions ever get the emoji-reaction row.
+    // since only completions ever get the emoji-reaction row. Not part of
+    // the initial-reveal gate below — it only feeds the separate Activity
+    // sheet, not anything visible on the group screen itself.
     activityLogUnsub = onSnapshot(
       query(collection(db, 'groups', groupId, 'activityLog'), orderBy('at', 'desc'), limit(50)),
       (snap)=>{
@@ -911,6 +939,22 @@ import {
       },
       (err)=>console.error('activity log listen failed', err)
     );
+  }
+
+  // Reveals the real group-screen content in one step, once members, the
+  // active-challenge list, AND every one of those challenges' completions
+  // have each landed their first snapshot — see groupDetailReady above.
+  function maybeRevealGroupDetail(){
+    if(groupDetailReady) return;
+    if(!membersLoadedOnce || !challengesLoadedOnce) return;
+    const allCompletionsLoaded = activeChallenges.every(ch=>
+      challengeCompletions[ch.id] && challengeCompletions[ch.id].loadedOnce
+    );
+    if(!allCompletionsLoaded) return;
+
+    groupDetailReady = true;
+    document.getElementById('groupDetailSkeleton').style.display = 'none';
+    document.getElementById('groupDetailBody').style.display = '';
   }
 
   function teardownDetailListeners(){
@@ -927,6 +971,9 @@ import {
     selectedCalendarChallengeId = null;
     activityFeedItems = [];
     activityLogItems = [];
+    groupDetailReady = false;
+    membersLoadedOnce = false;
+    challengesLoadedOnce = false;
     renderRoot();
   }
 
@@ -1024,6 +1071,8 @@ import {
       renderChallengesList();
       renderCalendarChallengeSelector();
       renderGroupCalendar();
+      challengesLoadedOnce = true;
+      maybeRevealGroupDetail();
     }, (err)=>console.error('challenges listen failed', err));
   }
 
@@ -1033,7 +1082,7 @@ import {
   // Collections here are small (one group, a handful of members, one
   // challenge's lifetime) so this is cheap even listened to in full.
   function attachChallengeCompletionsListener(challengeId){
-    challengeCompletions[challengeId] = {byDate:{}, seenKeys:new Set(), notified:false, unsub:null};
+    challengeCompletions[challengeId] = {byDate:{}, seenKeys:new Set(), notified:false, unsub:null, loadedOnce:false};
     const ref = collection(db, 'groups', activeGroupId, 'challenges', challengeId, 'completions');
     challengeCompletions[challengeId].unsub = onSnapshot(ref, (snap)=>{
       const entry = challengeCompletions[challengeId];
@@ -1063,10 +1112,12 @@ import {
       }
       entry.seenKeys = currentKeys;
       entry.notified = true;
+      entry.loadedOnce = true;
 
       renderChallengesList();
       if(challengeId===selectedCalendarChallengeId) renderGroupCalendar();
       syncActivityFeedFromActiveChallenges();
+      maybeRevealGroupDetail();
     }, (err)=>console.error('completions listen failed', err));
   }
 
