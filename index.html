@@ -271,6 +271,7 @@ main{max-width:640px; margin:0 auto; padding:18px 16px 40px;}
   position:relative; z-index:1; color:#fff; text-align:center; font-size:13px;
   margin:auto 20px 0; padding:12px; background:rgba(0,0,0,0.55); border-radius:10px;
 }
+.camera-location-note{color:var(--cyan); margin:0 20px 12px;}
 .camera-bottombar{
   position:relative; z-index:1; margin-top:auto;
   padding:20px 20px calc(env(safe-area-inset-bottom, 0px) + 24px);
@@ -1930,6 +1931,11 @@ body.sheet-open{overflow:hidden;}
     <span class="require-photo-link-state" id="challengeRequirePhotoState">Off</span>
   </button>
   <p class="text-sm text-faint mb-16" id="challengeRequirePhotoNote">Set up Telegram integration in Moderation first — this needs somewhere to send the photos.</p>
+  <button type="button" class="require-photo-link" id="challengeRequireLocationToggle" disabled>
+    <span>Also share location</span>
+    <span class="require-photo-link-state" id="challengeRequireLocationState">Off</span>
+  </button>
+  <p class="text-sm text-faint mb-16" id="challengeRequireLocationNote">Turn on "Require photo" first — location is shared alongside the photo, never on its own.</p>
   <p class="text-sm text-faint mb-16">Multiple challenges can run at once — this adds a new one alongside any others already active.</p>
   <button class="btn btn-primary btn-block" id="btnConfirmNewChallenge">Start challenge</button>
 </div>
@@ -2127,6 +2133,7 @@ body.sheet-open{overflow:hidden;}
   </div>
 
   <p class="camera-status" id="cameraStatusText" style="display:none;"></p>
+  <p class="camera-status camera-location-note" id="cameraLocationNote" style="display:none;">📍 This check-in shares your approximate location with the group. You can deny the location prompt and still send the photo.</p>
 
   <div class="camera-bottombar" id="cameraLiveControls">
     <div class="camera-zoom-row" id="cameraZoomControls" style="display:none;">
