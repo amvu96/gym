@@ -481,14 +481,16 @@ import {
       document.getElementById('challengeEndInput').value = fmtISO(end);
 
       // "Require photo" only makes sense — and is only enabled — once the
-      // group actually has somewhere to send photos to. The toggle stays
+      // group actually has somewhere to send photos to. The control stays
       // visible either way (just disabled), with the note underneath
       // explaining why, rather than disappearing entirely — a vanished
       // control with no visible explanation just looks like a bug.
       const telegramReady = !!(activeGroup && activeGroup.telegramWorkerUrl);
       requirePhotoOn = false;
       const photoToggle = document.getElementById('challengeRequirePhotoToggle');
-      photoToggle.classList.remove('on');
+      const photoState = document.getElementById('challengeRequirePhotoState');
+      photoState.classList.remove('on');
+      photoState.textContent = 'Off';
       photoToggle.disabled = !telegramReady;
       document.getElementById('challengeRequirePhotoNote').textContent = telegramReady
         ? "Members capture a live camera photo (no gallery uploads) each time they mark this challenge done — it's sent to your Telegram group along with the usual nudge."
@@ -499,7 +501,9 @@ import {
     document.getElementById('challengeRequirePhotoToggle').addEventListener('click', (e)=>{
       if(e.currentTarget.disabled) return;
       requirePhotoOn = !requirePhotoOn;
-      e.currentTarget.classList.toggle('on', requirePhotoOn);
+      const stateEl = document.getElementById('challengeRequirePhotoState');
+      stateEl.classList.toggle('on', requirePhotoOn);
+      stateEl.textContent = requirePhotoOn ? 'On' : 'Off';
     });
     document.getElementById('btnConfirmNewChallenge').addEventListener('click', createChallenge);
 
