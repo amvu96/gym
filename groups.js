@@ -59,6 +59,7 @@ import {
   let challengeUnsub = null;
   let calCursor = new Date();
   let selectedChallengeFreq = 'daily'; // working selection in the "New challenge" sheet
+  let requirePhotoOn = false; // working selection for the "New challenge" sheet's photo-requirement toggle
   let activityFeedItems = []; // merged, cached feed for the currently-open group
   let activityLogItems = []; // live "transparency log" — rename/join/leave/kick/etc, no reactions
   let activityLogUnsub = null;
@@ -478,9 +479,29 @@ import {
       document.getElementById('challengeStartInput').value = fmtISO(t);
       const end = new Date(t); end.setDate(end.getDate()+29);
       document.getElementById('challengeEndInput').value = fmtISO(end);
+
+      // "Require photo" only makes sense — and is only offered — once the
+      // group actually has somewhere to send photos to.
+      const telegramReady = !!(activeGroup && activeGroup.telegramWorkerUrl);
+      requirePhotoOn = false;
+      document.getElementById('challengeRequirePhotoToggle').classList.remove('on');
+      document.getElementById('challengeRequirePhotoRow').style.display = telegramReady ? '' : 'none';
+      document.getElementById('challengeRequirePhotoNote').style.display = telegramReady ? '' : 'none';
+      document.getElementById('challengeRequirePhotoDisabledNote').style.display = telegramReady ? 'none' : '';
+
       ui().openSheet('sheetNewChallenge');
     });
+    document.getElementById('challengeRequirePhotoToggle').addEventListener('click', ()=>{
+      requirePhotoOn = !requirePhotoOn;
+      document.getElementById('challengeRequirePhotoToggle').classList.toggle('on', requirePhotoOn);
+    });
     document.getElementById('btnConfirmNewChallenge').addEventListener('click', createChallenge);
+
+    document.getElementById('btnCameraClose').addEventListener('click', closeCameraCapture);
+    document.getElementById('btnCameraFlip').addEventListener('click', flipCameraFacing);
+    document.getElementById('btnCameraShutter').addEventListener('click', captureCameraFrame);
+    document.getElementById('btnCameraRetake').addEventListener('click', retakeCameraPhoto);
+    document.getElementById('btnCameraConfirm').addEventListener('click', confirmCameraPhoto);
     document.querySelectorAll('.challenge-freq-chip').forEach(chip=>{
       chip.addEventListener('click', ()=>{
         selectedChallengeFreq = chip.dataset.freq;
@@ -976,6 +997,7 @@ import {
 
   function closeGroup(){
     teardownDetailListeners();
+    closeCameraCapture(); // safety net — stops any live camera stream if this fires mid-capture
     activeGroupId = null; activeGroup = null; activeMembers = []; activeChallenges = [];
     selectedCalendarChallengeId = null;
     activityFeedItems = [];
@@ -1191,9 +1213,9 @@ import {
         : `${progress.periodCount}/${progress.periodTarget} ${progress.periodLabel}${progress.metTarget?' ✓':''}`;
 
       return `<div class="card group-challenge-card">
-        <div class="settings-row-label">${escapeHtml(ch.title)}</div>
+        <div class="settings-row-label">${escapeHtml(ch.title)}${ch.requirePhoto?' 📷':''}</div>
         ${ch.targetLabel ? `<div class="text-sm text-muted">${escapeHtml(ch.targetLabel)}</div>` : ''}
-        <div class="text-sm text-faint mt-4">${freqLabel} · ${fmtRange(ch.startDate, ch.endDate)}${isPastEnd?' · Ended':''}</div>
+        <div class="text-sm text-faint mt-4">${freqLabel} · ${fmtRange(ch.startDate, ch.endDate)}${isPastEnd?' · Ended':''}${ch.requirePhoto?' · Photo required':''}</div>
         <div class="text-sm mt-8" style="color:${progress.metTarget?'var(--positive)':'var(--text-muted)'};">${progressText}</div>
         <div class="quick-actions mt-12" style="margin-bottom:0;">
           ${inRange ? `<button class="btn btn-primary btn-sm" style="flex:1;" data-mark-done="${ch.id}" ${progress.doneToday?'disabled':''}>${progress.doneToday?'✓ Done for today':'Mark today done'}</button>` : ''}
@@ -1248,13 +1270,17 @@ import {
     const endDate = document.getElementById('challengeEndInput').value;
     const frequency = selectedChallengeFreq;
     const frequencyCount = frequency==='daily' ? 1 : Math.max(1, +document.getElementById('challengeFreqCountInput').value || 1);
+    // Only actually honored if the group has Telegram configured — the
+    // toggle itself is hidden otherwise, but this guards against it
+    // somehow being left on from a previous open where it was configured.
+    const requirePhoto = requirePhotoOn && !!(activeGroup && activeGroup.telegramWorkerUrl);
     if(!title){ toast('Give the challenge a name'); return; }
     if(!startDate || !endDate || startDate > endDate){ toast('Check the challenge dates'); return; }
     try{
       // No longer deactivates other challenges — multiple can run at once,
       // each with its own independent completions and calendar view.
       await addDoc(collection(db, 'groups', activeGroupId, 'challenges'), {
-        title, targetLabel, startDate, endDate, frequency, frequencyCount,
+        title, targetLabel, startDate, endDate, frequency, frequencyCount, requirePhoto,
         createdBy: currentUser.uid, createdAt: Date.now(), active: true
       });
       ui().closeSheet('sheetNewChallenge');
@@ -1308,10 +1334,20 @@ import {
   async function markChallengeDone(challengeId){
     const ch = activeChallenges.find(c=>c.id===challengeId);
     if(!ch || !currentUser) return;
+    if(ch.requirePhoto){
+      openCameraCapture(ch);
+      return;
+    }
+    await recordChallengeCompletion(ch, null);
+  }
+
+  // Shared by both paths — a plain check-in and a photo-verified one.
+  // photoBase64 is null for the plain path.
+  async function recordChallengeCompletion(ch, photoBase64){
     const date = todayISO();
     const id = `${date}_${currentUser.uid}`;
     try{
-      await setDoc(doc(db, 'groups', activeGroupId, 'challenges', challengeId, 'completions', id), {
+      await setDoc(doc(db, 'groups', activeGroupId, 'challenges', ch.id, 'completions', id), {
         uid: currentUser.uid,
         date,
         displayName: currentUser.name || 'Member',
@@ -1327,12 +1363,150 @@ import {
         });
       }
       if(activeGroup && activeGroup.telegramWorkerUrl){
-        publishTelegram(activeGroup.telegramWorkerUrl,
-          `🎉 Congrats ${firstName(currentUser.name)} for finishing today's challenge: ${ch.title}! Feel free to share a photo 📸`);
+        if(photoBase64){
+          publishTelegramPhoto(activeGroup.telegramWorkerUrl, photoBase64,
+            `📸 ${firstName(currentUser.name)} completed today's challenge: ${ch.title}!`);
+        } else {
+          publishTelegram(activeGroup.telegramWorkerUrl,
+            `🎉 Congrats ${firstName(currentUser.name)} for finishing today's challenge: ${ch.title}! Feel free to share a photo 📸`);
+        }
       }
     }catch(e){
       console.error(e);
       toast('Could not save — try again');
+    }
+  }
+
+  /* ---------------- challenge photo capture (camera only, no gallery) ----------------
+     Deliberately uses getUserMedia + a live <video> preview rather than a
+     native `<input type="file" capture>` picker. The file-input approach
+     is only a UX *hint* toward the camera app — behavior varies by browser/
+     OS and some still offer a "choose from library" option alongside it,
+     which would defeat the entire point ("this way users can't lie"). A
+     getUserMedia stream never shows a file picker at all, so there's no
+     path to selecting a pre-existing photo — what gets sent is provably a
+     live camera frame captured at the moment of tapping the shutter.
+
+     Trade-off worth being honest about: this is strong evidence against
+     reusing an old photo, but it's not proof of *what* was photographed or
+     *who* took it — someone could still point the camera at a screen, or
+     hand their phone to someone else. No client-side technique closes
+     that gap completely.
+
+     Also note: because the image is drawn from a live video frame onto a
+     <canvas>, it carries no EXIF metadata at all (no GPS, no camera model,
+     no embedded timestamp) — unlike a real photo file from the camera app.
+     The "metadata" here is our own: the completion doc's date/time, same
+     as any other check-in. */
+  let cameraStream = null;
+  let cameraFacingMode = 'user'; // selfie by default, per the ask — flippable to 'environment'
+  let pendingPhotoChallenge = null;
+  let capturedPhotoBase64 = null;
+
+  function openCameraCapture(ch){
+    pendingPhotoChallenge = ch;
+    capturedPhotoBase64 = null;
+    cameraFacingMode = 'user';
+    document.getElementById('cameraTitle').textContent = `Capture a photo — ${ch.title}`;
+    document.getElementById('cameraOverlay').style.display = 'flex';
+    document.getElementById('cameraVideo').style.display = '';
+    document.getElementById('cameraPreviewImg').style.display = 'none';
+    document.getElementById('cameraLiveControls').style.display = '';
+    document.getElementById('cameraPreviewControls').style.display = 'none';
+    document.getElementById('cameraStatusText').style.display = 'none';
+    startCameraStream();
+  }
+
+  async function startCameraStream(){
+    stopCameraStream();
+    const statusEl = document.getElementById('cameraStatusText');
+    try{
+      cameraStream = await navigator.mediaDevices.getUserMedia({
+        video: {facingMode: cameraFacingMode}, audio: false
+      });
+      document.getElementById('cameraVideo').srcObject = cameraStream;
+      statusEl.style.display = 'none';
+    }catch(e){
+      console.error('camera access failed', e);
+      statusEl.textContent = 'Camera access is needed to mark this done. Check your browser or site permissions and try again.';
+      statusEl.style.display = '';
+    }
+  }
+
+  function stopCameraStream(){
+    if(cameraStream){
+      cameraStream.getTracks().forEach(t=>t.stop());
+      cameraStream = null;
+    }
+  }
+
+  function closeCameraCapture(){
+    stopCameraStream();
+    document.getElementById('cameraOverlay').style.display = 'none';
+    pendingPhotoChallenge = null;
+    capturedPhotoBase64 = null;
+  }
+
+  async function flipCameraFacing(){
+    cameraFacingMode = cameraFacingMode==='user' ? 'environment' : 'user';
+    await startCameraStream();
+  }
+
+  function captureCameraFrame(){
+    const video = document.getElementById('cameraVideo');
+    if(!video.videoWidth) return; // stream not actually ready yet
+    const canvas = document.getElementById('cameraCanvas');
+    // Downscale — this is a verification snapshot for Telegram, not a
+    // keepsake, so there's no reason to ship a full-resolution photo.
+    const maxDim = 1024;
+    const scale = Math.min(1, maxDim / Math.max(video.videoWidth, video.videoHeight));
+    canvas.width = video.videoWidth * scale;
+    canvas.height = video.videoHeight * scale;
+    const ctx = canvas.getContext('2d');
+    // The front camera's live preview is mirrored (as every selfie camera
+    // is); mirror the captured frame to match, so the sent photo looks the
+    // way the person actually saw themselves while framing it.
+    if(cameraFacingMode==='user'){
+      ctx.translate(canvas.width, 0);
+      ctx.scale(-1, 1);
+    }
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
+    capturedPhotoBase64 = dataUrl.split(',')[1];
+
+    document.getElementById('cameraPreviewImg').src = dataUrl;
+    document.getElementById('cameraPreviewImg').style.display = '';
+    document.getElementById('cameraVideo').style.display = 'none';
+    document.getElementById('cameraLiveControls').style.display = 'none';
+    document.getElementById('cameraPreviewControls').style.display = '';
+  }
+
+  function retakeCameraPhoto(){
+    capturedPhotoBase64 = null;
+    document.getElementById('cameraPreviewImg').style.display = 'none';
+    document.getElementById('cameraVideo').style.display = '';
+    document.getElementById('cameraLiveControls').style.display = '';
+    document.getElementById('cameraPreviewControls').style.display = 'none';
+  }
+
+  async function confirmCameraPhoto(){
+    if(!pendingPhotoChallenge || !capturedPhotoBase64) return;
+    const ch = pendingPhotoChallenge;
+    const photoBase64 = capturedPhotoBase64;
+    closeCameraCapture();
+    await recordChallengeCompletion(ch, photoBase64);
+  }
+
+  async function publishTelegramPhoto(workerUrl, photoBase64, caption){
+    if(!workerUrl) return;
+    try{
+      await fetch(workerUrl, {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({photoBase64, caption})
+      });
+    }catch(e){
+      console.error('telegram photo publish failed', e);
     }
   }
 
