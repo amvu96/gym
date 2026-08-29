@@ -245,6 +245,45 @@ main{max-width:640px; margin:0 auto; padding:18px 16px 40px;}
 .spin{animation:spin 1s linear infinite;}
 @keyframes spin{to{transform:rotate(360deg);}}
 
+/* ---------------- CHALLENGE PHOTO CAPTURE ---------------- */
+.camera-overlay{
+  position:fixed; inset:0; z-index:97; background:#000;
+  display:flex; flex-direction:column;
+}
+.camera-overlay video, .camera-overlay img{
+  position:absolute; inset:0; width:100%; height:100%; object-fit:cover;
+}
+.camera-overlay canvas{display:none;}
+.camera-topbar{
+  position:relative; z-index:1; display:flex; align-items:center; justify-content:space-between;
+  padding:calc(env(safe-area-inset-top, 0px) + 14px) 14px 14px;
+  background:linear-gradient(to bottom, rgba(0,0,0,0.6), transparent);
+}
+.camera-title{color:#fff; font-size:13px; font-weight:600; text-shadow:0 1px 3px rgba(0,0,0,0.6);}
+.camera-icon-btn{
+  width:38px; height:38px; border-radius:50%; background:rgba(0,0,0,0.45);
+  border:1px solid rgba(255,255,255,0.25); color:#fff;
+  display:flex; align-items:center; justify-content:center; flex-shrink:0;
+}
+.camera-icon-btn svg{width:18px; height:18px;}
+.camera-icon-btn:active{background:rgba(0,0,0,0.7);}
+.camera-status{
+  position:relative; z-index:1; color:#fff; text-align:center; font-size:13px;
+  margin:auto 20px 0; padding:12px; background:rgba(0,0,0,0.55); border-radius:10px;
+}
+.camera-bottombar{
+  position:relative; z-index:1; margin-top:auto;
+  padding:20px 20px calc(env(safe-area-inset-bottom, 0px) + 24px);
+  display:flex; align-items:center; justify-content:center; gap:12px;
+  background:linear-gradient(to top, rgba(0,0,0,0.65), transparent);
+}
+.camera-shutter-btn{
+  width:68px; height:68px; border-radius:50%; background:#fff;
+  border:4px solid rgba(255,255,255,0.5); box-shadow:0 0 0 2px rgba(0,0,0,0.3);
+}
+.camera-shutter-btn:active{transform:scale(0.92); background:#eee;}
+.camera-preview-controls .btn{flex:1;}
+
 /* ============ TODAY / HOME VIEW ============ */
 .today-hero{
   border-radius:var(--radius-lg);
@@ -1860,6 +1899,12 @@ body.sheet-open{overflow:hidden;}
     <label>End date</label>
     <input type="date" id="challengeEndInput">
   </div>
+  <div class="settings-row mb-8" id="challengeRequirePhotoRow">
+    <div class="settings-row-label">Require photo to mark done</div>
+    <button class="toggle" id="challengeRequirePhotoToggle"></button>
+  </div>
+  <p class="text-sm text-faint mb-16" id="challengeRequirePhotoNote">Members capture a live camera photo (no gallery uploads) each time they mark this challenge done — it's sent to your Telegram group along with the usual nudge.</p>
+  <p class="text-sm text-faint mb-16" id="challengeRequirePhotoDisabledNote" style="display:none;">Set up Telegram integration in Moderation first — this needs somewhere to send the photos.</p>
   <p class="text-sm text-faint mb-16">Multiple challenges can run at once — this adds a new one alongside any others already active.</p>
   <button class="btn btn-primary btn-block" id="btnConfirmNewChallenge">Start challenge</button>
 </div>
@@ -2037,6 +2082,34 @@ body.sheet-open{overflow:hidden;}
       <button class="rest-picker-option" data-rest-value="120">2m</button>
       <button class="rest-picker-option" data-rest-value="180">3m</button>
     </div>
+  </div>
+</div>
+
+<!-- ============ CHALLENGE PHOTO CAPTURE (camera only, no gallery) ============ -->
+<div class="camera-overlay" id="cameraOverlay" style="display:none;">
+  <video id="cameraVideo" autoplay playsinline muted></video>
+  <canvas id="cameraCanvas" style="display:none;"></canvas>
+  <img id="cameraPreviewImg" alt="Captured photo" style="display:none;">
+
+  <div class="camera-topbar">
+    <button class="camera-icon-btn" id="btnCameraClose" aria-label="Cancel">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
+    </button>
+    <div class="camera-title" id="cameraTitle">Capture a photo</div>
+    <button class="camera-icon-btn" id="btnCameraFlip" aria-label="Flip camera">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.85 2.83 0 1 1 4 4L10.5 18.5 5 20l1.5-5.5z"/><path d="M1 4v6h6M23 20v-6h-6"/><path d="M20.49 9A9 9 0 0 0 5.64 5.64M3.51 15A9 9 0 0 0 18.36 18.36"/></svg>
+    </button>
+  </div>
+
+  <p class="camera-status" id="cameraStatusText" style="display:none;"></p>
+
+  <div class="camera-bottombar" id="cameraLiveControls">
+    <button class="camera-shutter-btn" id="btnCameraShutter" aria-label="Take photo"></button>
+  </div>
+
+  <div class="camera-bottombar camera-preview-controls" id="cameraPreviewControls" style="display:none;">
+    <button class="btn btn-secondary" id="btnCameraRetake">Retake</button>
+    <button class="btn btn-primary" id="btnCameraConfirm">Send &amp; mark done</button>
   </div>
 </div>
 
