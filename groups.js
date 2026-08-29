@@ -480,20 +480,26 @@ import {
       const end = new Date(t); end.setDate(end.getDate()+29);
       document.getElementById('challengeEndInput').value = fmtISO(end);
 
-      // "Require photo" only makes sense — and is only offered — once the
-      // group actually has somewhere to send photos to.
+      // "Require photo" only makes sense — and is only enabled — once the
+      // group actually has somewhere to send photos to. The toggle stays
+      // visible either way (just disabled), with the note underneath
+      // explaining why, rather than disappearing entirely — a vanished
+      // control with no visible explanation just looks like a bug.
       const telegramReady = !!(activeGroup && activeGroup.telegramWorkerUrl);
       requirePhotoOn = false;
-      document.getElementById('challengeRequirePhotoToggle').classList.remove('on');
-      document.getElementById('challengeRequirePhotoRow').style.display = telegramReady ? '' : 'none';
-      document.getElementById('challengeRequirePhotoNote').style.display = telegramReady ? '' : 'none';
-      document.getElementById('challengeRequirePhotoDisabledNote').style.display = telegramReady ? 'none' : '';
+      const photoToggle = document.getElementById('challengeRequirePhotoToggle');
+      photoToggle.classList.remove('on');
+      photoToggle.disabled = !telegramReady;
+      document.getElementById('challengeRequirePhotoNote').textContent = telegramReady
+        ? "Members capture a live camera photo (no gallery uploads) each time they mark this challenge done — it's sent to your Telegram group along with the usual nudge."
+        : 'Set up Telegram integration in Moderation first — this needs somewhere to send the photos.';
 
       ui().openSheet('sheetNewChallenge');
     });
-    document.getElementById('challengeRequirePhotoToggle').addEventListener('click', ()=>{
+    document.getElementById('challengeRequirePhotoToggle').addEventListener('click', (e)=>{
+      if(e.currentTarget.disabled) return;
       requirePhotoOn = !requirePhotoOn;
-      document.getElementById('challengeRequirePhotoToggle').classList.toggle('on', requirePhotoOn);
+      e.currentTarget.classList.toggle('on', requirePhotoOn);
     });
     document.getElementById('btnConfirmNewChallenge').addEventListener('click', createChallenge);
 
