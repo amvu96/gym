@@ -509,6 +509,8 @@ import {
 
     document.getElementById('btnCameraClose').addEventListener('click', closeCameraCapture);
     document.getElementById('btnCameraFlip').addEventListener('click', flipCameraFacing);
+    document.getElementById('btnCameraZoomOut').addEventListener('click', ()=>applyZoom(currentZoom - zoomStepSize()));
+    document.getElementById('btnCameraZoomIn').addEventListener('click', ()=>applyZoom(currentZoom + zoomStepSize()));
     document.getElementById('btnCameraShutter').addEventListener('click', captureCameraFrame);
     document.getElementById('btnCameraRetake').addEventListener('click', retakeCameraPhoto);
     document.getElementById('btnCameraConfirm').addEventListener('click', confirmCameraPhoto);
@@ -1412,6 +1414,9 @@ import {
   let cameraFacingMode = 'user'; // selfie by default, per the ask — flippable to 'environment'
   let pendingPhotoChallenge = null;
   let capturedPhotoBase64 = null;
+  let currentZoomTrack = null;
+  let currentZoom = 1;
+  let zoomCaps = null; // {min, max, step} from the active track's capabilities, or null if unsupported
 
   function openCameraCapture(ch){
     pendingPhotoChallenge = ch;
@@ -1419,6 +1424,7 @@ import {
     cameraFacingMode = 'user';
     document.getElementById('cameraTitle').textContent = `Capture a photo — ${ch.title}`;
     document.getElementById('cameraOverlay').style.display = 'flex';
+    document.getElementById('cameraTopbar').style.display = '';
     document.getElementById('cameraVideo').style.display = '';
     document.getElementById('cameraPreviewImg').style.display = 'none';
     document.getElementById('cameraLiveControls').style.display = '';
@@ -1436,6 +1442,7 @@ import {
       });
       document.getElementById('cameraVideo').srcObject = cameraStream;
       statusEl.style.display = 'none';
+      setupZoomControls();
     }catch(e){
       console.error('camera access failed', e);
       statusEl.textContent = 'Camera access is needed to mark this done. Check your browser or site permissions and try again.';
@@ -1443,11 +1450,49 @@ import {
     }
   }
 
+  // Many phones default a fresh camera stream — the front one especially —
+  // to well above its own minimum zoom, which is exactly why the framing
+  // can feel uncomfortably tight before anyone's touched a zoom control.
+  // Reset to the widest field of view the track actually supports as soon
+  // as we know its capabilities, then expose +/- to adjust from there.
+  // Not every browser/device exposes a `zoom` constraint at all (notably
+  // iOS Safari and most desktop webcams don't) — the row just stays hidden
+  // when that's the case rather than pretending to offer a control that'd
+  // silently do nothing.
+  function setupZoomControls(){
+    const zoomRow = document.getElementById('cameraZoomControls');
+    const track = cameraStream ? cameraStream.getVideoTracks()[0] : null;
+    currentZoomTrack = track || null;
+    zoomCaps = (track && track.getCapabilities) ? (track.getCapabilities().zoom || null) : null;
+    if(!zoomCaps){
+      zoomRow.style.display = 'none';
+      return;
+    }
+    zoomRow.style.display = '';
+    applyZoom(zoomCaps.min);
+  }
+
+  function zoomStepSize(){
+    if(!zoomCaps) return 0.1;
+    return zoomCaps.step || Math.max(0.1, (zoomCaps.max - zoomCaps.min) / 10);
+  }
+
+  function applyZoom(z){
+    if(!currentZoomTrack || !zoomCaps) return;
+    currentZoom = Math.min(zoomCaps.max, Math.max(zoomCaps.min, z));
+    currentZoomTrack.applyConstraints({advanced: [{zoom: currentZoom}]}).catch(e=>{
+      console.error('zoom adjustment failed', e);
+    });
+    document.getElementById('cameraZoomLabel').textContent = `${currentZoom.toFixed(1)}x`;
+  }
+
   function stopCameraStream(){
     if(cameraStream){
       cameraStream.getTracks().forEach(t=>t.stop());
       cameraStream = null;
     }
+    currentZoomTrack = null;
+    zoomCaps = null;
   }
 
   function closeCameraCapture(){
@@ -1487,6 +1532,10 @@ import {
     document.getElementById('cameraPreviewImg').src = dataUrl;
     document.getElementById('cameraPreviewImg').style.display = '';
     document.getElementById('cameraVideo').style.display = 'none';
+    // Nothing on the live-view chrome (close, flip, zoom) makes sense once
+    // a photo's already been taken — Retake/Send are the only two things
+    // to do from here, so that's the only thing left visible.
+    document.getElementById('cameraTopbar').style.display = 'none';
     document.getElementById('cameraLiveControls').style.display = 'none';
     document.getElementById('cameraPreviewControls').style.display = '';
   }
@@ -1495,6 +1544,7 @@ import {
     capturedPhotoBase64 = null;
     document.getElementById('cameraPreviewImg').style.display = 'none';
     document.getElementById('cameraVideo').style.display = '';
+    document.getElementById('cameraTopbar').style.display = '';
     document.getElementById('cameraLiveControls').style.display = '';
     document.getElementById('cameraPreviewControls').style.display = 'none';
   }
