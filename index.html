@@ -1182,6 +1182,7 @@ body.workout-active{padding-bottom:calc(96px + env(safe-area-inset-bottom));}
   border-radius:50%; background:var(--text-faint); transition:transform .2s, background .2s;
 }
 .toggle.on::after{transform:translateX(18px); background:var(--accent); box-shadow:0 0 6px var(--accent-glow);}
+.toggle:disabled{opacity:0.4; cursor:not-allowed;}
 
 /* ============ MODAL / SHEET ============ */
 .sheet-backdrop{
@@ -1902,10 +1903,9 @@ body.sheet-open{overflow:hidden;}
   </div>
   <div class="settings-row mb-8" id="challengeRequirePhotoRow">
     <div class="settings-row-label">Require photo to mark done</div>
-    <button class="toggle" id="challengeRequirePhotoToggle"></button>
+    <button class="toggle" id="challengeRequirePhotoToggle" disabled></button>
   </div>
-  <p class="text-sm text-faint mb-16" id="challengeRequirePhotoNote">Members capture a live camera photo (no gallery uploads) each time they mark this challenge done — it's sent to your Telegram group along with the usual nudge.</p>
-  <p class="text-sm text-faint mb-16" id="challengeRequirePhotoDisabledNote" style="display:none;">Set up Telegram integration in Moderation first — this needs somewhere to send the photos.</p>
+  <p class="text-sm text-faint mb-16" id="challengeRequirePhotoNote">Set up Telegram integration in Moderation first — this needs somewhere to send the photos.</p>
   <p class="text-sm text-faint mb-16">Multiple challenges can run at once — this adds a new one alongside any others already active.</p>
   <button class="btn btn-primary btn-block" id="btnConfirmNewChallenge">Start challenge</button>
 </div>
