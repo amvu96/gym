@@ -19,7 +19,7 @@
    ============================================================ */
 import {
   collection, doc, getDoc, getDocs, setDoc, addDoc, updateDoc, deleteDoc,
-  query, where, orderBy, onSnapshot, runTransaction, serverTimestamp, limit, deleteField, arrayRemove
+  query, where, orderBy, onSnapshot, runTransaction, serverTimestamp, limit, deleteField, arrayRemove, arrayUnion
 } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js";
 
 (function(){
@@ -520,13 +520,26 @@ import {
         document.querySelectorAll('.challenge-freq-chip').forEach(c=>c.classList.toggle('selected', c===chip));
         const countField = document.getElementById('challengeFreqCountField');
         const countLabel = document.getElementById('challengeFreqCountLabel');
+        const countInput = document.getElementById('challengeFreqCountInput');
         if(selectedChallengeFreq==='daily'){
           countField.style.display = 'none';
         } else {
           countField.style.display = '';
           countLabel.textContent = selectedChallengeFreq==='weekly' ? 'Times per week' : 'Times per month';
+          // A week can only ever contain 7 days — one completion per day is
+          // the hard cap set elsewhere in the app — so any weekly target
+          // above 7 would be mathematically impossible to ever complete.
+          // Monthly gets a generous but still finite ceiling.
+          const cap = selectedChallengeFreq==='weekly' ? 7 : 31;
+          countInput.max = String(cap);
+          if(+countInput.value > cap) countInput.value = cap;
         }
       });
+    });
+    document.getElementById('challengeFreqCountInput').addEventListener('change', (e)=>{
+      const cap = +e.target.max || 31;
+      const val = Math.min(cap, Math.max(1, +e.target.value || 1));
+      e.target.value = val;
     });
 
     document.getElementById('btnChallengeHistory').addEventListener('click', showChallengeHistorySheet);
@@ -1114,6 +1127,9 @@ import {
       renderChallengesList();
       renderCalendarChallengeSelector();
       renderGroupCalendar();
+      newList.forEach(ch=>{
+        if(challengeCompletions[ch.id] && challengeCompletions[ch.id].loadedOnce) checkAndProcessEliminations(ch);
+      });
       challengesLoadedOnce = true;
       maybeRevealGroupDetail();
     }, (err)=>console.error('challenges listen failed', err));
@@ -1160,6 +1176,8 @@ import {
       renderChallengesList();
       if(challengeId===selectedCalendarChallengeId) renderGroupCalendar();
       syncActivityFeedFromActiveChallenges();
+      const ch = activeChallenges.find(c=>c.id===challengeId);
+      if(ch) checkAndProcessEliminations(ch);
       maybeRevealGroupDetail();
     }, (err)=>console.error('completions listen failed', err));
   }
@@ -1189,6 +1207,143 @@ import {
     return {doneToday, periodCount: doneToday?1:0, periodTarget:1, periodLabel:'today', metTarget:doneToday};
   }
 
+  function addDaysISO(iso, n){
+    const d = parseISO(iso);
+    d.setDate(d.getDate()+n);
+    return fmtISO(d);
+  }
+
+  function daysBetweenInclusive(startIso, endIso){
+    return Math.round((parseISO(endIso) - parseISO(startIso)) / 86400000) + 1;
+  }
+
+  // Builds the chronological list of "periods" a challenge is graded on —
+  // one per day (daily), per Monday–Sunday week (weekly), or per calendar
+  // month (monthly) — each carrying how many check-ins it requires and
+  // whether it's "dismissed": excluded entirely, neither required nor
+  // counted, for being a partial period (at the start or end of the
+  // challenge's date range) too short to fairly hold the full target
+  // against. A partial period only counts if it has at least *double* the
+  // target's worth of days available — e.g. a 3x/week target needs a
+  // partial week of 6+ days to count; a 2-day partial week would demand a
+  // zero-margin perfect run, so it's dismissed instead. Full periods
+  // (a complete week or month entirely inside the range) always count.
+  function computeChallengePeriods(ch){
+    const periods = [];
+    const target = ch.frequencyCount || 1;
+
+    if(ch.frequency==='daily'){
+      let cursor = ch.startDate;
+      while(cursor <= ch.endDate){
+        periods.push({start: cursor, end: cursor, requiredCount: 1, dismissed: false});
+        cursor = addDaysISO(cursor, 1);
+      }
+      return periods;
+    }
+
+    if(ch.frequency==='weekly'){
+      let weekStart = fmtISO(mondayOfWeek(parseISO(ch.startDate)));
+      while(weekStart <= ch.endDate){
+        const weekEnd = addDaysISO(weekStart, 6);
+        const overlapStart = weekStart < ch.startDate ? ch.startDate : weekStart;
+        const overlapEnd = weekEnd > ch.endDate ? ch.endDate : weekEnd;
+        const overlapDays = daysBetweenInclusive(overlapStart, overlapEnd);
+        const dismissed = overlapDays < 7 && overlapDays < 2*target;
+        periods.push({start: overlapStart, end: overlapEnd, requiredCount: target, dismissed});
+        weekStart = addDaysISO(weekStart, 7);
+      }
+      return periods;
+    }
+
+    if(ch.frequency==='monthly'){
+      let monthStart = new Date(parseISO(ch.startDate).getFullYear(), parseISO(ch.startDate).getMonth(), 1);
+      while(fmtISO(monthStart) <= ch.endDate){
+        const monthEndDate = new Date(monthStart.getFullYear(), monthStart.getMonth()+1, 0);
+        const monthStartIso = fmtISO(monthStart), monthEndIso = fmtISO(monthEndDate);
+        const overlapStart = monthStartIso < ch.startDate ? ch.startDate : monthStartIso;
+        const overlapEnd = monthEndIso > ch.endDate ? ch.endDate : monthEndIso;
+        const overlapDays = daysBetweenInclusive(overlapStart, overlapEnd);
+        const fullDays = daysBetweenInclusive(monthStartIso, monthEndIso);
+        const dismissed = overlapDays < fullDays && overlapDays < 2*target;
+        periods.push({start: overlapStart, end: overlapEnd, requiredCount: target, dismissed});
+        monthStart = new Date(monthStart.getFullYear(), monthStart.getMonth()+1, 1);
+      }
+      return periods;
+    }
+
+    return periods;
+  }
+
+  // "0/X this challenge" — X is the total check-ins required to complete
+  // the whole challenge (summed target across every non-dismissed period),
+  // and the numerator only counts the user's own completions that fall
+  // within those same non-dismissed periods, so the two numbers are always
+  // measuring the same thing.
+  function computeChallengeTotals(ch, byDate){
+    const periods = computeChallengePeriods(ch);
+    let requiredTotal = 0, myTotal = 0;
+    periods.forEach(p=>{
+      if(p.dismissed) return;
+      requiredTotal += p.requiredCount;
+      Object.entries(byDate).forEach(([date, list])=>{
+        if(date>=p.start && date<=p.end && list.some(c=>c.uid===currentUser.uid)) myTotal++;
+      });
+    });
+    return {myTotal, requiredTotal};
+  }
+
+  // Opportunistic, client-side elimination check — there's no backend to
+  // run this on a schedule, so it runs whenever a challenge's completions
+  // refresh (i.e. whichever member's client happens to be open). For every
+  // member not already eliminated, walks their required periods in order;
+  // the first *elapsed, non-dismissed* period they didn't hit the target
+  // for eliminates them from this specific challenge, permanently — they
+  // never get evaluated against later periods once out. Safe to call
+  // repeatedly: already-eliminated members are skipped, so redundant calls
+  // from multiple simultaneously-open clients just no-op past the first.
+  async function checkAndProcessEliminations(ch){
+    if(!activeGroup || !currentUser || !activeGroupId) return;
+    const entry = challengeCompletions[ch.id];
+    if(!entry) return;
+    const alreadyEliminated = new Set(ch.eliminatedUids || []);
+    const candidates = activeMembers.filter(m=>!alreadyEliminated.has(m.uid));
+    if(candidates.length===0) return;
+
+    const periods = computeChallengePeriods(ch);
+    const today = todayISO();
+    const newlyFailed = [];
+
+    candidates.forEach(m=>{
+      for(const p of periods){
+        if(p.dismissed) continue;
+        if(p.end >= today) break; // not elapsed yet — periods are chronological
+        const count = Object.entries(entry.byDate)
+          .filter(([date, list])=> date>=p.start && date<=p.end && list.some(c=>c.uid===m.uid))
+          .length;
+        if(count < p.requiredCount){
+          newlyFailed.push(m);
+          break;
+        }
+      }
+    });
+
+    if(newlyFailed.length===0) return;
+    try{
+      await updateDoc(doc(db, 'groups', activeGroupId, 'challenges', ch.id), {
+        eliminatedUids: arrayUnion(...newlyFailed.map(m=>m.uid))
+      });
+      newlyFailed.forEach(m=>{
+        logGroupEvent(activeGroupId, `${m.displayName} missed their target for "${ch.title}" and is out of the challenge`);
+        if(activeGroup.telegramWorkerUrl){
+          publishTelegram(activeGroup.telegramWorkerUrl,
+            `❌ ${firstName(m.displayName)} missed their target for "${ch.title}" and can no longer participate.`);
+        }
+      });
+    }catch(e){
+      console.error('elimination check failed', e);
+    }
+  }
+
   function mondayOfWeek(d){
     const day = (d.getDay()+6)%7; // 0=Mon, matching the app's convention elsewhere
     const monday = new Date(d);
@@ -1213,13 +1368,29 @@ import {
     const cardsHtml = activeChallenges.map(ch=>{
       const entry = challengeCompletions[ch.id];
       const byDate = entry ? entry.byDate : {};
-      const progress = computeChallengeProgress(ch, byDate);
-      const today = todayISO();
-      const inRange = today >= ch.startDate && today <= ch.endDate;
-      const isPastEnd = today > ch.endDate;
+      const isEliminated = !!(ch.eliminatedUids && ch.eliminatedUids.includes(currentUser.uid));
       const freqLabel = ch.frequency==='weekly' ? `${ch.frequencyCount||1}x per week`
         : ch.frequency==='monthly' ? `${ch.frequencyCount||1}x per month`
         : 'Daily';
+      const isPastEnd = todayISO() > ch.endDate;
+
+      if(isEliminated){
+        return `<div class="card group-challenge-card eliminated">
+          <div class="settings-row-label">${escapeHtml(ch.title)}${ch.requirePhoto?' 📷':''}</div>
+          ${ch.targetLabel ? `<div class="text-sm text-muted">${escapeHtml(ch.targetLabel)}</div>` : ''}
+          <div class="text-sm text-faint mt-4">${freqLabel} · ${fmtRange(ch.startDate, ch.endDate)}${isPastEnd?' · Ended':''}${ch.requirePhoto?' · Photo required':''}</div>
+          <div class="text-sm mt-8" style="color:var(--danger);">❌ You missed a required target and are out of this challenge</div>
+          <div class="quick-actions mt-12" style="margin-bottom:0;">
+            <button class="btn btn-secondary btn-sm" style="flex:1; color:var(--danger); border-color:var(--danger-dim);" disabled>You can't participate in this challenge</button>
+            ${isOwner ? `<button class="btn btn-secondary btn-sm" data-end-challenge="${ch.id}">End</button>` : ''}
+          </div>
+        </div>`;
+      }
+
+      const progress = computeChallengeProgress(ch, byDate);
+      const totals = computeChallengeTotals(ch, byDate);
+      const today = todayISO();
+      const inRange = today >= ch.startDate && today <= ch.endDate;
       const progressText = ch.frequency==='daily'
         ? (progress.doneToday ? '✓ Done today' : 'Not done today')
         : `${progress.periodCount}/${progress.periodTarget} ${progress.periodLabel}${progress.metTarget?' ✓':''}`;
@@ -1229,6 +1400,7 @@ import {
         ${ch.targetLabel ? `<div class="text-sm text-muted">${escapeHtml(ch.targetLabel)}</div>` : ''}
         <div class="text-sm text-faint mt-4">${freqLabel} · ${fmtRange(ch.startDate, ch.endDate)}${isPastEnd?' · Ended':''}${ch.requirePhoto?' · Photo required':''}</div>
         <div class="text-sm mt-8" style="color:${progress.metTarget?'var(--positive)':'var(--text-muted)'};">${progressText}</div>
+        <div class="text-sm text-faint mt-4">${totals.myTotal}/${totals.requiredTotal} this challenge</div>
         <div class="quick-actions mt-12" style="margin-bottom:0;">
           ${inRange ? `<button class="btn btn-primary btn-sm" style="flex:1;" data-mark-done="${ch.id}" ${progress.doneToday?'disabled':''}>${progress.doneToday?'✓ Done for today':'Mark today done'}</button>` : ''}
           ${isOwner ? `<button class="btn btn-secondary btn-sm" data-end-challenge="${ch.id}">End</button>` : ''}
@@ -1281,7 +1453,12 @@ import {
     const startDate = document.getElementById('challengeStartInput').value;
     const endDate = document.getElementById('challengeEndInput').value;
     const frequency = selectedChallengeFreq;
-    const frequencyCount = frequency==='daily' ? 1 : Math.max(1, +document.getElementById('challengeFreqCountInput').value || 1);
+    // Final clamp regardless of what the input's own max/change handling
+    // already did — a week can never hold more than 7 completions (one per
+    // day, hard-capped elsewhere), so anything higher would be a target
+    // nobody could ever actually complete.
+    const freqCap = frequency==='weekly' ? 7 : 31;
+    const frequencyCount = frequency==='daily' ? 1 : Math.min(freqCap, Math.max(1, +document.getElementById('challengeFreqCountInput').value || 1));
     // Only actually honored if the group has Telegram configured — the
     // toggle itself is hidden otherwise, but this guards against it
     // somehow being left on from a previous open where it was configured.
@@ -1346,6 +1523,7 @@ import {
   async function markChallengeDone(challengeId){
     const ch = activeChallenges.find(c=>c.id===challengeId);
     if(!ch || !currentUser) return;
+    if(ch.eliminatedUids && ch.eliminatedUids.includes(currentUser.uid)) return; // belt-and-suspenders — the button is already disabled for this
     if(ch.requirePhoto){
       openCameraCapture(ch);
       return;
@@ -2262,11 +2440,19 @@ import {
     });
 
     // Legend: one row per member and their color, so dot colors are readable
-    // at a glance without needing to tap into every day.
+    // at a glance without needing to tap into every day. A member eliminated
+    // from the currently-selected challenge shows red with a ❌ instead of
+    // their usual color — visible to everyone, not just the person out.
+    const selectedCh = activeChallenges.find(c=>c.id===selectedCalendarChallengeId);
+    const eliminatedSet = new Set((selectedCh && selectedCh.eliminatedUids) || []);
     const legend = document.getElementById('calGroupLegend');
-    legend.innerHTML = activeMembers.map(m=>`
-      <div class="cal-legend-item"><div class="cal-legend-swatch" style="background:${m.color}; border:none;"></div>${escapeHtml(firstName(m.displayName))}</div>
-    `).join('');
+    legend.innerHTML = activeMembers.map(m=>{
+      const isOut = eliminatedSet.has(m.uid);
+      return `<div class="cal-legend-item" style="${isOut?'color:var(--danger);':''}">
+        <div class="cal-legend-swatch" style="background:${isOut?'var(--danger)':m.color}; border:none;"></div>
+        ${escapeHtml(firstName(m.displayName))}${isOut?' ❌':''}
+      </div>`;
+    }).join('');
   }
 
   function openDaySheet(dateIso){
