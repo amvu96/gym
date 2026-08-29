@@ -60,6 +60,7 @@ import {
   let calCursor = new Date();
   let selectedChallengeFreq = 'daily'; // working selection in the "New challenge" sheet
   let requirePhotoOn = false; // working selection for the "New challenge" sheet's photo-requirement toggle
+  let requireLocationOn = false; // working selection — only ever meaningful alongside requirePhotoOn
   let activityFeedItems = []; // merged, cached feed for the currently-open group
   let activityLogItems = []; // live "transparency log" — rename/join/leave/kick/etc, no reactions
   let activityLogUnsub = null;
@@ -432,6 +433,18 @@ import {
     });
   }
 
+  // Keeps the "Also share location" control in sync with "Require photo" —
+  // it can only ever be enabled when photo is both required AND turned on,
+  // since location is sent alongside the photo rather than on its own.
+  function updateLocationToggleAvailability(){
+    const locToggle = document.getElementById('challengeRequireLocationToggle');
+    const locNote = document.getElementById('challengeRequireLocationNote');
+    locToggle.disabled = !requirePhotoOn;
+    locNote.textContent = requirePhotoOn
+      ? 'Also attaches an approximate Google Maps link to the Telegram message when a member checks in. Denying the location prompt still lets them send the photo alone.'
+      : 'Turn on "Require photo" first — location is shared alongside the photo, never on its own.';
+  }
+
   function bindStaticUI(){
     document.getElementById('btnNewGroup').addEventListener('click', ()=>{
       if(!requireSignedIn()) return;
@@ -487,6 +500,7 @@ import {
       // control with no visible explanation just looks like a bug.
       const telegramReady = !!(activeGroup && activeGroup.telegramWorkerUrl);
       requirePhotoOn = false;
+      requireLocationOn = false;
       const photoToggle = document.getElementById('challengeRequirePhotoToggle');
       const photoState = document.getElementById('challengeRequirePhotoState');
       photoState.classList.remove('on');
@@ -495,6 +509,7 @@ import {
       document.getElementById('challengeRequirePhotoNote').textContent = telegramReady
         ? "Members capture a live camera photo (no gallery uploads) each time they mark this challenge done — it's sent to your Telegram group along with the usual nudge."
         : 'Set up Telegram integration in Moderation first — this needs somewhere to send the photos.';
+      updateLocationToggleAvailability();
 
       ui().openSheet('sheetNewChallenge');
     });
@@ -504,6 +519,22 @@ import {
       const stateEl = document.getElementById('challengeRequirePhotoState');
       stateEl.classList.toggle('on', requirePhotoOn);
       stateEl.textContent = requirePhotoOn ? 'On' : 'Off';
+      // Location only ever makes sense alongside a required photo — if
+      // photo just got turned off, location can't stay on either.
+      if(!requirePhotoOn && requireLocationOn){
+        requireLocationOn = false;
+        const locState = document.getElementById('challengeRequireLocationState');
+        locState.classList.remove('on');
+        locState.textContent = 'Off';
+      }
+      updateLocationToggleAvailability();
+    });
+    document.getElementById('challengeRequireLocationToggle').addEventListener('click', (e)=>{
+      if(e.currentTarget.disabled) return;
+      requireLocationOn = !requireLocationOn;
+      const stateEl = document.getElementById('challengeRequireLocationState');
+      stateEl.classList.toggle('on', requireLocationOn);
+      stateEl.textContent = requireLocationOn ? 'On' : 'Off';
     });
     document.getElementById('btnConfirmNewChallenge').addEventListener('click', createChallenge);
 
@@ -1510,13 +1541,14 @@ import {
     // toggle itself is hidden otherwise, but this guards against it
     // somehow being left on from a previous open where it was configured.
     const requirePhoto = requirePhotoOn && !!(activeGroup && activeGroup.telegramWorkerUrl);
+    const requireLocation = requirePhoto && requireLocationOn; // never true without requirePhoto
     if(!title){ toast('Give the challenge a name'); return; }
     if(!startDate || !endDate || startDate > endDate){ toast('Check the challenge dates'); return; }
     try{
       // No longer deactivates other challenges — multiple can run at once,
       // each with its own independent completions and calendar view.
       await addDoc(collection(db, 'groups', activeGroupId, 'challenges'), {
-        title, targetLabel, startDate, endDate, frequency, frequencyCount, requirePhoto,
+        title, targetLabel, startDate, endDate, frequency, frequencyCount, requirePhoto, requireLocation,
         createdBy: currentUser.uid, createdAt: Date.now(), active: true
       });
       ui().closeSheet('sheetNewChallenge');
@@ -1580,7 +1612,13 @@ import {
 
   // Shared by both paths — a plain check-in and a photo-verified one.
   // photoBase64 is null for the plain path.
-  async function recordChallengeCompletion(ch, photoBase64){
+  // mapsLink is deliberately never written to Firestore — it only ever
+  // reaches Telegram, in the same message the photo itself already goes
+  // to. Keeping it out of the completion doc means this app never becomes
+  // a second, permanent, app-controlled record of someone's location on
+  // top of whatever the group's own Telegram chat retains — one copy of
+  // that data is already one more than ideal for something this sensitive.
+  async function recordChallengeCompletion(ch, photoBase64, mapsLink){
     const date = todayISO();
     const id = `${date}_${currentUser.uid}`;
     try{
@@ -1601,8 +1639,9 @@ import {
       }
       if(activeGroup && activeGroup.telegramWorkerUrl){
         if(photoBase64){
-          publishTelegramPhoto(activeGroup.telegramWorkerUrl, photoBase64,
-            `📸 ${firstName(currentUser.name)} completed today's challenge: ${ch.title}!`);
+          const caption = `📸 ${firstName(currentUser.name)} completed today's challenge: ${ch.title}!`
+            + (mapsLink ? `\n📍 ${mapsLink}` : '');
+          publishTelegramPhoto(activeGroup.telegramWorkerUrl, photoBase64, caption);
         } else {
           publishTelegram(activeGroup.telegramWorkerUrl,
             `🎉 Congrats ${firstName(currentUser.name)} for finishing today's challenge: ${ch.title}! Feel free to share a photo 📸`);
@@ -1638,6 +1677,7 @@ import {
   let cameraStream = null;
   let cameraFacingMode = 'user'; // selfie by default, per the ask — flippable to 'environment'
   let pendingPhotoChallenge = null;
+  let pendingLocationPromise = null; // resolves to {lat,lng} or null — kicked off at shutter time, read at confirm time
   let capturedPhotoBase64 = null;
   let currentZoomTrack = null;
   let currentZoom = 1;
@@ -1646,6 +1686,7 @@ import {
   function openCameraCapture(ch){
     pendingPhotoChallenge = ch;
     capturedPhotoBase64 = null;
+    pendingLocationPromise = null;
     cameraFacingMode = 'user';
     document.getElementById('cameraTitle').textContent = `Capture a photo — ${ch.title}`;
     document.getElementById('cameraOverlay').style.display = 'flex';
@@ -1655,6 +1696,11 @@ import {
     document.getElementById('cameraLiveControls').style.display = '';
     document.getElementById('cameraPreviewControls').style.display = 'none';
     document.getElementById('cameraStatusText').style.display = 'none';
+    // Shown for the whole live-view step (not just a one-off popup) so it's
+    // visible before the browser's own location prompt fires, not after —
+    // the person should know what's about to be asked and why, and that
+    // declining is fine, before they're staring at a bare system dialog.
+    document.getElementById('cameraLocationNote').style.display = ch.requireLocation ? '' : 'none';
     startCameraStream();
   }
 
@@ -1725,6 +1771,7 @@ import {
     document.getElementById('cameraOverlay').style.display = 'none';
     pendingPhotoChallenge = null;
     capturedPhotoBase64 = null;
+    pendingLocationPromise = null;
   }
 
   async function flipCameraFacing(){
@@ -1754,23 +1801,49 @@ import {
     const dataUrl = canvas.toDataURL('image/jpeg', 0.8);
     capturedPhotoBase64 = dataUrl.split(',')[1];
 
+    // Fired at the exact moment of capture (not later, at confirm time) so
+    // the location genuinely corresponds to when the photo was taken. Only
+    // *read* once they hit Send, by which point it's almost always already
+    // resolved — this way the permission prompt (if it hasn't been granted
+    // before) doesn't block or delay the photo preview appearing. Entirely
+    // best-effort: a denial or failure just means no map link gets sent,
+    // never blocks the check-in itself.
+    if(pendingPhotoChallenge && pendingPhotoChallenge.requireLocation && navigator.geolocation){
+      pendingLocationPromise = new Promise(resolve=>{
+        navigator.geolocation.getCurrentPosition(
+          pos => resolve({lat: pos.coords.latitude, lng: pos.coords.longitude}),
+          err => { console.error('geolocation failed', err); resolve(null); },
+          {timeout: 8000, maximumAge: 0}
+        );
+      });
+    } else {
+      pendingLocationPromise = null;
+    }
+
     document.getElementById('cameraPreviewImg').src = dataUrl;
     document.getElementById('cameraPreviewImg').style.display = '';
     document.getElementById('cameraVideo').style.display = 'none';
-    // Nothing on the live-view chrome (close, flip, zoom) makes sense once
-    // a photo's already been taken — Retake/Send are the only two things
-    // to do from here, so that's the only thing left visible.
+    // Nothing on the live-view chrome (close, flip, zoom, the location
+    // notice) makes sense once a photo's already been taken — Retake/Send
+    // are the only two things to do from here.
     document.getElementById('cameraTopbar').style.display = 'none';
     document.getElementById('cameraLiveControls').style.display = 'none';
+    document.getElementById('cameraLocationNote').style.display = 'none';
     document.getElementById('cameraPreviewControls').style.display = '';
   }
 
   function retakeCameraPhoto(){
     capturedPhotoBase64 = null;
+    // A retake discards this attempt entirely — any location fetch tied to
+    // the discarded frame is stale and shouldn't carry over to whatever
+    // gets captured next.
+    pendingLocationPromise = null;
     document.getElementById('cameraPreviewImg').style.display = 'none';
     document.getElementById('cameraVideo').style.display = '';
     document.getElementById('cameraTopbar').style.display = '';
     document.getElementById('cameraLiveControls').style.display = '';
+    document.getElementById('cameraLocationNote').style.display =
+      (pendingPhotoChallenge && pendingPhotoChallenge.requireLocation) ? '' : 'none';
     document.getElementById('cameraPreviewControls').style.display = 'none';
   }
 
@@ -1778,8 +1851,17 @@ import {
     if(!pendingPhotoChallenge || !capturedPhotoBase64) return;
     const ch = pendingPhotoChallenge;
     const photoBase64 = capturedPhotoBase64;
+    let mapsLink = null;
+    if(pendingLocationPromise){
+      try{
+        const loc = await pendingLocationPromise;
+        if(loc) mapsLink = `https://maps.google.com/?q=${loc.lat},${loc.lng}`;
+      }catch(e){
+        console.error('resolving location failed', e);
+      }
+    }
     closeCameraCapture();
-    await recordChallengeCompletion(ch, photoBase64);
+    await recordChallengeCompletion(ch, photoBase64, mapsLink);
   }
 
   async function publishTelegramPhoto(workerUrl, photoBase64, caption){
