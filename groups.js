@@ -1219,20 +1219,23 @@ import {
 
   // Builds the chronological list of "periods" a challenge is graded on —
   // one per day (daily), per Monday–Sunday week (weekly), or per calendar
-  // month (monthly) — each carrying how many check-ins it requires and
-  // whether it's "dismissed": excluded entirely, neither required nor
-  // counted, for being a partial period (at the start or end of the
-  // challenge's date range) too short to fairly hold the full target
-  // against. A partial period only counts if it has at least *double* the
-  // target's worth of days available — e.g. a 3x/week target needs a
-  // partial week of 6+ days to count; a 2-day partial week would demand a
-  // zero-margin perfect run, so it's dismissed instead. Full periods
-  // (a complete week or month entirely inside the range) always count.
+  // month (monthly) — each carrying how many check-ins it requires. If the
+  // very first or last period is too short to fairly hold the full target
+  // against (fewer than *double* the target's worth of days — e.g. a
+  // 3x/week target needs at least 6 days to count on its own), it's folded
+  // into its one full neighboring period instead of being thrown away: the
+  // neighbor's date range stretches to cover it, but its target stays the
+  // same. More calendar days, same target — that's what makes a challenge
+  // with an awkward start/end date easier rather than unfairly tight,
+  // without losing those extra days' worth of required effort entirely
+  // (which straight-up dismissing them would have done). See
+  // mergeShortEdgePeriods() for the actual folding logic — this function
+  // just builds the raw, unmerged list first.
   function computeChallengePeriods(ch){
-    const periods = [];
     const target = ch.frequencyCount || 1;
 
     if(ch.frequency==='daily'){
+      const periods = [];
       let cursor = ch.startDate;
       while(cursor <= ch.endDate){
         periods.push({start: cursor, end: cursor, requiredCount: 1, dismissed: false});
@@ -1241,6 +1244,7 @@ import {
       return periods;
     }
 
+    const raw = [];
     if(ch.frequency==='weekly'){
       let weekStart = fmtISO(mondayOfWeek(parseISO(ch.startDate)));
       while(weekStart <= ch.endDate){
@@ -1248,14 +1252,11 @@ import {
         const overlapStart = weekStart < ch.startDate ? ch.startDate : weekStart;
         const overlapEnd = weekEnd > ch.endDate ? ch.endDate : weekEnd;
         const overlapDays = daysBetweenInclusive(overlapStart, overlapEnd);
-        const dismissed = overlapDays < 7 && overlapDays < 2*target;
-        periods.push({start: overlapStart, end: overlapEnd, requiredCount: target, dismissed});
+        const needsMerge = overlapDays < 7 && overlapDays < 2*target;
+        raw.push({start: overlapStart, end: overlapEnd, requiredCount: target, needsMerge});
         weekStart = addDaysISO(weekStart, 7);
       }
-      return periods;
-    }
-
-    if(ch.frequency==='monthly'){
+    } else if(ch.frequency==='monthly'){
       let monthStart = new Date(parseISO(ch.startDate).getFullYear(), parseISO(ch.startDate).getMonth(), 1);
       while(fmtISO(monthStart) <= ch.endDate){
         const monthEndDate = new Date(monthStart.getFullYear(), monthStart.getMonth()+1, 0);
@@ -1264,31 +1265,78 @@ import {
         const overlapEnd = monthEndIso > ch.endDate ? ch.endDate : monthEndIso;
         const overlapDays = daysBetweenInclusive(overlapStart, overlapEnd);
         const fullDays = daysBetweenInclusive(monthStartIso, monthEndIso);
-        const dismissed = overlapDays < fullDays && overlapDays < 2*target;
-        periods.push({start: overlapStart, end: overlapEnd, requiredCount: target, dismissed});
+        const needsMerge = overlapDays < fullDays && overlapDays < 2*target;
+        raw.push({start: overlapStart, end: overlapEnd, requiredCount: target, needsMerge});
         monthStart = new Date(monthStart.getFullYear(), monthStart.getMonth()+1, 1);
       }
-      return periods;
     }
+    return mergeShortEdgePeriods(raw);
+  }
 
-    return periods;
+  // Folds a too-short leading and/or trailing period into its one
+  // neighboring full period, per the comment above. Only ever touches the
+  // first and/or last entries — middle periods are always full weeks/months
+  // by construction, so they never need merging. If the whole challenge is
+  // just one short period with no neighbor to fold into at all, it's left
+  // standing on its own with the plain target (nothing else to do).
+  function mergeShortEdgePeriods(raw){
+    if(raw.length<=1) return raw.map(p=>({start:p.start, end:p.end, requiredCount:p.requiredCount, dismissed:false}));
+    let periods = raw.map(p=>({...p}));
+
+    if(periods[0].needsMerge){
+      periods[1] = {...periods[1], start: periods[0].start};
+      periods.shift();
+    }
+    if(periods.length>1 && periods[periods.length-1].needsMerge){
+      const li = periods.length-1;
+      periods[li-1] = {...periods[li-1], end: periods[li].end};
+      periods.pop();
+    }
+    return periods.map(p=>({start:p.start, end:p.end, requiredCount:p.requiredCount, dismissed:false}));
+  }
+
+  // Purely a display label, separate from the Monday–Sunday calendar weeks
+  // used for progress/dismissal math elsewhere — this counts "weeks" as
+  // consecutive 8-day blocks starting from the challenge's own start date
+  // (start, start+7), not calendar-aligned, per the exact range requested:
+  // "Week 1: 29 Aug – 5 Sep" (Aug 29 + 7 days = Sep 5), "Week 2" starting
+  // the very next day. Only meaningful for weekly challenges.
+  function computeCurrentWeekLabel(ch){
+    if(ch.frequency!=='weekly') return null;
+    const today = todayISO();
+    let weekStart = ch.startDate;
+    let weekNum = 1;
+    for(let i=0; i<520; i++){ // generous safety cap — well over 10 years of weeks
+      const weekEnd = addDaysISO(weekStart, 7);
+      if(weekEnd >= ch.endDate){
+        return `Week ${weekNum}: ${fmtRange(weekStart, ch.endDate)}`;
+      }
+      if(today <= weekEnd){
+        return `Week ${weekNum}: ${fmtRange(weekStart, weekEnd)}`;
+      }
+      weekStart = addDaysISO(weekEnd, 1);
+      weekNum++;
+    }
+    return null;
   }
 
   // "0/X this challenge" — X is the total check-ins required to complete
-  // the whole challenge (summed target across every non-dismissed period),
-  // and the numerator only counts the user's own completions that fall
-  // within those same non-dismissed periods, so the two numbers are always
-  // measuring the same thing.
+  // the whole challenge (summed target across every non-dismissed period).
+  // The numerator counts every one of the user's real completions in the
+  // challenge's date range, regardless of which period it fell in — see the
+  // comment inside for why dismissed periods still credit real check-ins.
   function computeChallengeTotals(ch, byDate){
     const periods = computeChallengePeriods(ch);
-    let requiredTotal = 0, myTotal = 0;
-    periods.forEach(p=>{
-      if(p.dismissed) return;
-      requiredTotal += p.requiredCount;
-      Object.entries(byDate).forEach(([date, list])=>{
-        if(date>=p.start && date<=p.end && list.some(c=>c.uid===currentUser.uid)) myTotal++;
-      });
-    });
+    // Dismissal only ever affects what's *required* (the denominator) —
+    // real check-ins always count toward the numerator regardless of which
+    // period they fell in, including a dismissed one. Excluding them there
+    // too was the bug: a check-in made during a dismissed partial week
+    // would show up in "this week" but vanish from "this challenge",
+    // which reads as the app losing your progress.
+    const requiredTotal = periods.reduce((sum, p)=> p.dismissed ? sum : sum + p.requiredCount, 0);
+    const myTotal = Object.entries(byDate)
+      .filter(([date, list])=> date>=ch.startDate && date<=ch.endDate && list.some(c=>c.uid===currentUser.uid))
+      .length;
     return {myTotal, requiredTotal};
   }
 
@@ -1389,6 +1437,7 @@ import {
 
       const progress = computeChallengeProgress(ch, byDate);
       const totals = computeChallengeTotals(ch, byDate);
+      const weekLabel = computeCurrentWeekLabel(ch);
       const today = todayISO();
       const inRange = today >= ch.startDate && today <= ch.endDate;
       const progressText = ch.frequency==='daily'
@@ -1399,6 +1448,7 @@ import {
         <div class="settings-row-label">${escapeHtml(ch.title)}${ch.requirePhoto?' 📷':''}</div>
         ${ch.targetLabel ? `<div class="text-sm text-muted">${escapeHtml(ch.targetLabel)}</div>` : ''}
         <div class="text-sm text-faint mt-4">${freqLabel} · ${fmtRange(ch.startDate, ch.endDate)}${isPastEnd?' · Ended':''}${ch.requirePhoto?' · Photo required':''}</div>
+        ${weekLabel ? `<div class="text-sm text-faint mt-4">${escapeHtml(weekLabel)}</div>` : ''}
         <div class="text-sm mt-8" style="color:${progress.metTarget?'var(--positive)':'var(--text-muted)'};">${progressText}</div>
         <div class="text-sm text-faint mt-4">${totals.myTotal}/${totals.requiredTotal} this challenge</div>
         <div class="quick-actions mt-12" style="margin-bottom:0;">
