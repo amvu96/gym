@@ -9,7 +9,7 @@
 // stale/cached build can be identified at a glance instead of guessing —
 // if what you see on-device doesn't match what should have shipped, this
 // number tells you whether you're actually running the latest code.
-const APP_VERSION = 'v1.47.0';
+const APP_VERSION = 'v1.48.0';
 
 const STORAGE_KEY = 'gymtracker_data_v1';
 const LB_PER_KG = 2.20462;
@@ -4202,10 +4202,44 @@ function renderSessionExerciseCard(ex){
   </div>`;
 }
 
-/* ---------------- SERVICE WORKER / PWA ---------------- */
+/* ---------------- SERVICE WORKER / PWA ----------------
+   The fetch handler in sw.js is already network-first for app files, so a
+   fresh deploy is normally just one reload away — the actual pain point
+   this session kept running into wasn't stale file *content*, it was the
+   browser not noticing a new service worker exists promptly, and even
+   once it did, an already-open tab just kept running whatever JS it had
+   already loaded into memory until someone manually closed and reopened
+   the app (sometimes twice). Two changes address that directly:
+   1. Proactively ask the browser to check for a new sw.js — on load, then
+      again whenever the tab becomes visible (a PWA left open in the
+      background for a while, which is the common case on a phone, would
+      otherwise just wait on Chrome's own internal throttled check).
+   2. The moment a new service worker actually takes control (controllerchange),
+      reload automatically instead of leaving the update installed-but-unused
+      until the person happens to reopen the app. Safe to do — the active
+      workout is already persisted to localStorage independently of this,
+      so a reload mid-session doesn't lose in-progress sets. */
 if('serviceWorker' in navigator){
+  let swRegistration = null;
+  let reloadingForUpdate = false;
+
   window.addEventListener('load', ()=>{
-    navigator.serviceWorker.register('sw.js').catch(err=>console.warn('SW registration failed', err));
+    navigator.serviceWorker.register('sw.js')
+      .then(reg=>{ swRegistration = reg; })
+      .catch(err=>console.warn('SW registration failed', err));
+  });
+
+  document.addEventListener('visibilitychange', ()=>{
+    if(document.visibilityState==='visible' && swRegistration){
+      swRegistration.update().catch(()=>{});
+    }
+  });
+
+  navigator.serviceWorker.addEventListener('controllerchange', ()=>{
+    if(reloadingForUpdate) return; // guards against a reload loop if this somehow fires more than once
+    reloadingForUpdate = true;
+    toast('Updating to the latest version…');
+    setTimeout(()=>location.reload(), 800);
   });
 }
 
