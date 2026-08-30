@@ -1411,7 +1411,7 @@ import {
       newlyFailed.forEach(m=>{
         logGroupEvent(activeGroupId, `${m.displayName} missed their target for "${ch.title}" and is out of the challenge`);
         if(activeGroup.telegramWorkerUrl){
-          publishTelegram(activeGroup.telegramWorkerUrl,
+          publishTelegram(activeGroup.telegramWorkerUrl, activeGroup.telegramChatId,
             `❌ ${firstName(m.displayName)} missed their target for "${ch.title}" and can no longer participate.`);
         }
       });
@@ -1561,6 +1561,10 @@ import {
           tags: ['triangular_flag_on_post']
         });
       }
+      if(activeGroup && activeGroup.telegramWorkerUrl){
+        publishTelegram(activeGroup.telegramWorkerUrl, activeGroup.telegramChatId,
+          `🚩 ${firstName(currentUser.name)} started a new challenge: "${title}"`);
+      }
     }catch(e){
       console.error(e);
       toast('Could not create challenge');
@@ -1581,6 +1585,10 @@ import {
       await updateDoc(doc(db, 'groups', activeGroupId, 'challenges', challengeId), {active:false, endedAt: Date.now()});
       toast('Challenge ended');
       logGroupEvent(activeGroupId, `ended the challenge "${ch.title}"`);
+      if(activeGroup && activeGroup.telegramWorkerUrl){
+        publishTelegram(activeGroup.telegramWorkerUrl, activeGroup.telegramChatId,
+          `🏁 ${firstName(currentUser.name)} ended the challenge: "${ch.title}"`);
+      }
     }catch(e){
       console.error(e);
       toast('Could not end challenge');
@@ -1641,9 +1649,9 @@ import {
         if(photoBase64){
           const caption = `📸 ${firstName(currentUser.name)} completed today's challenge: ${ch.title}!`
             + (mapsLink ? `\n📍 ${mapsLink}` : '');
-          publishTelegramPhoto(activeGroup.telegramWorkerUrl, photoBase64, caption);
+          publishTelegramPhoto(activeGroup.telegramWorkerUrl, activeGroup.telegramChatId, photoBase64, caption);
         } else {
-          publishTelegram(activeGroup.telegramWorkerUrl,
+          publishTelegram(activeGroup.telegramWorkerUrl, activeGroup.telegramChatId,
             `🎉 Congrats ${firstName(currentUser.name)} for finishing today's challenge: ${ch.title}! Feel free to share a photo 📸`);
         }
       }
@@ -1864,13 +1872,19 @@ import {
     await recordChallengeCompletion(ch, photoBase64, mapsLink);
   }
 
-  async function publishTelegramPhoto(workerUrl, photoBase64, caption){
-    if(!workerUrl) return;
+  // The Worker is shared across every group that uses it — the bot token
+  // is the only thing baked into its own secrets. Which specific Telegram
+  // chat a message lands in is decided per-call by chat_id, which the
+  // Worker cross-checks against its own allow-list before ever touching
+  // the Telegram API, so a leaked Worker URL alone still can't be used to
+  // spam a chat that URL's owner never explicitly approved for it.
+  async function publishTelegramPhoto(workerUrl, chatId, photoBase64, caption){
+    if(!workerUrl || !chatId) return;
     try{
       await fetch(workerUrl, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({photoBase64, caption})
+        body: JSON.stringify({chat_id: chatId, photoBase64, caption})
       });
     }catch(e){
       console.error('telegram photo publish failed', e);
@@ -1906,6 +1920,7 @@ import {
     if(!activeGroupId || !activeGroup) return;
     document.getElementById('modGroupNameInput').value = activeGroup.name;
     document.getElementById('modTelegramWorkerInput').value = activeGroup.telegramWorkerUrl || '';
+    document.getElementById('modTelegramChatIdInput').value = activeGroup.telegramChatId || '';
     document.getElementById('modTelegramGroupLinkInput').value = activeGroup.telegramGroupLink || '';
     renderModMembersList();
     ui().openSheet('sheetModeration');
@@ -1979,13 +1994,13 @@ import {
      token and chat ID as its own secrets. This app only ever sends the
      message text to that Worker's URL; it never sees or stores the token
      or the chat ID at all. */
-  async function publishTelegram(workerUrl, text){
-    if(!workerUrl) return;
+  async function publishTelegram(workerUrl, chatId, text){
+    if(!workerUrl || !chatId) return;
     try{
       await fetch(workerUrl, {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({text})
+        body: JSON.stringify({chat_id: chatId, text})
       });
     }catch(e){
       // Same principle as the ntfy publish — never let a notification
@@ -1994,15 +2009,23 @@ import {
     }
   }
 
+  // The same deployed Worker can now serve many different groups' Telegram
+  // chats — the Worker itself only ever holds the bot token as a shared
+  // secret; which chat a given group's messages land in is this
+  // telegramChatId, cross-checked by the Worker against its own allow-list
+  // of chat IDs the owner has actually approved for it.
   async function saveTelegramSettings(){
     const workerUrl = document.getElementById('modTelegramWorkerInput').value.trim();
+    const chatId = document.getElementById('modTelegramChatIdInput').value.trim();
     const groupLink = document.getElementById('modTelegramGroupLinkInput').value.trim();
     try{
       await updateDoc(doc(db, 'groups', activeGroupId), {
         telegramWorkerUrl: workerUrl || null,
+        telegramChatId: chatId || null,
         telegramGroupLink: groupLink || null
       });
       activeGroup.telegramWorkerUrl = workerUrl || null;
+      activeGroup.telegramChatId = chatId || null;
       activeGroup.telegramGroupLink = groupLink || null;
       document.getElementById('btnOpenTelegramGroup').style.display = groupLink ? '' : 'none';
       toast('Telegram settings saved');
@@ -2014,8 +2037,10 @@ import {
 
   async function testTelegramMessage(){
     const workerUrl = document.getElementById('modTelegramWorkerInput').value.trim();
+    const chatId = document.getElementById('modTelegramChatIdInput').value.trim();
     if(!workerUrl){ toast('Enter your Cloudflare Worker URL first'); return; }
-    await publishTelegram(workerUrl, `Test message from ${activeGroup.name} 👋 — if you can see this, it's working!`);
+    if(!chatId){ toast('Enter this group\'s Telegram chat ID first'); return; }
+    await publishTelegram(workerUrl, chatId, `Test message from ${activeGroup.name} 👋 — if you can see this, it's working!`);
     toast('Test sent — check your Telegram group');
   }
 
