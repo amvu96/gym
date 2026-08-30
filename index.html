@@ -267,6 +267,8 @@ main{max-width:640px; margin:0 auto; padding:18px 16px 40px;}
 }
 .camera-icon-btn svg{width:18px; height:18px;}
 .camera-icon-btn:active{background:rgba(0,0,0,0.7);}
+.camera-icon-btn.mirror-on{background:var(--accent-dim); border-color:var(--accent); color:var(--accent);}
+.camera-mirrored{transform:scaleX(-1);}
 .camera-status{
   position:relative; z-index:1; color:#fff; text-align:center; font-size:13px;
   margin:auto 20px 0; padding:12px; background:rgba(0,0,0,0.55); border-radius:10px;
@@ -2130,9 +2132,14 @@ body.sheet-open{overflow:hidden;}
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>
     </button>
     <div class="camera-title" id="cameraTitle">Capture a photo</div>
-    <button class="camera-icon-btn" id="btnCameraFlip" aria-label="Flip camera">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
-    </button>
+    <div style="display:flex; gap:8px;">
+      <button class="camera-icon-btn" id="btnCameraMirror" aria-label="Toggle mirrored preview">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18"/><path d="M16 7l4 5-4 5"/><path d="M8 7l-4 5 4 5"/></svg>
+      </button>
+      <button class="camera-icon-btn" id="btnCameraFlip" aria-label="Flip camera">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>
+      </button>
+    </div>
   </div>
 
   <p class="camera-status" id="cameraStatusText" style="display:none;"></p>
