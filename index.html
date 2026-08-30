@@ -1981,9 +1981,12 @@ body.sheet-open{overflow:hidden;}
     <button class="btn btn-secondary btn-block mb-16" id="btnModRegenerateInvite">Regenerate invite code</button>
 
     <h2 class="section-label">Telegram integration</h2>
-    <p class="text-sm text-faint mb-8">Posts a text nudge to your group's Telegram chat whenever someone finishes a challenge. Requires a small one-time setup outside the app — see the setup guide.</p>
+    <p class="text-sm text-faint mb-8">Posts a text nudge to your group's Telegram chat whenever someone finishes a challenge. One Worker can be reused across all your groups — each just needs its own chat ID below. Requires a small one-time setup outside the app — see the setup guide.</p>
     <div class="field mb-8">
       <input type="text" id="modTelegramWorkerInput" placeholder="Cloudflare Worker URL" autocomplete="off">
+    </div>
+    <div class="field mb-8">
+      <input type="text" id="modTelegramChatIdInput" placeholder="This group's Telegram chat ID" autocomplete="off" inputmode="numeric">
     </div>
     <div class="field mb-8">
       <input type="text" id="modTelegramGroupLinkInput" placeholder="Telegram group link (optional, for the menu)" autocomplete="off">
