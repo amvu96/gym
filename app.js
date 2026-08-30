@@ -9,7 +9,7 @@
 // stale/cached build can be identified at a glance instead of guessing —
 // if what you see on-device doesn't match what should have shipped, this
 // number tells you whether you're actually running the latest code.
-const APP_VERSION = 'v1.43.0';
+const APP_VERSION = 'v1.44.0';
 
 const STORAGE_KEY = 'gymtracker_data_v1';
 const LB_PER_KG = 2.20462;
@@ -135,28 +135,57 @@ function b64DecodeUtf8(b64){
 // Encodes a template into a compact payload: {v, n, e:[[exId,restSeconds,supersetGroupIndex], ...]}.
 // Returns {b64, skippedCount} — skippedCount is how many exercises were
 // custom (unshareable) and got left out.
+// Payload v2: exercises identified by their numeric position in the
+// built-in EXERCISE_DB array instead of their full string id, and each
+// entry is a sparse object with single-letter keys that simply omit rest
+// (r) / superset group (g) when unset, rather than writing out an explicit
+// null placeholder for every plain exercise. Spelling out ids like
+// "cable-woodchopper" three times over, inflated another ~33% by base64,
+// was by far the biggest contributor to shared-routine links (and their
+// QR codes) getting unreasonably long for anything beyond a handful of
+// exercises. v1 links people already have out in the wild still decode
+// correctly — see decodeShareableRoutine, which normalizes either version
+// down to the same shape before anything else in the app touches it.
 function encodeShareableRoutine(t){
   const groupMap = {};
   let nextGroup = 0;
   let skippedCount = 0;
   const e = t.exIds.map((exId, idx)=>{
-    if(!EXERCISE_DB.some(d=>d.id===exId)){ skippedCount++; return null; }
-    let g = null;
+    const dbIdx = EXERCISE_DB.findIndex(d=>d.id===exId);
+    if(dbIdx===-1){ skippedCount++; return null; } // custom exercise — not in the shared catalog, can't be shared
+    const entry = {i: dbIdx};
     const gid = t.supersetGroups && t.supersetGroups[idx];
     if(gid){
       if(!(gid in groupMap)) groupMap[gid] = nextGroup++;
-      g = groupMap[gid];
+      entry.g = groupMap[gid];
     }
     const rest = (t.restSeconds && t.restSeconds[idx]!=null) ? t.restSeconds[idx] : null;
-    return [exId, rest, g];
+    if(rest!=null) entry.r = rest;
+    return entry;
   }).filter(Boolean);
-  const payload = {v:1, n:t.name, e};
+  const payload = {v:2, n:t.name, e};
   return {b64: b64EncodeUtf8(JSON.stringify(payload)), skippedCount};
 }
 function decodeShareableRoutine(b64){
   const payload = JSON.parse(b64DecodeUtf8(b64));
-  if(!payload || payload.v!==1 || !Array.isArray(payload.e)) throw new Error('Malformed routine link');
-  return payload;
+  if(!payload || !Array.isArray(payload.e)) throw new Error('Malformed routine link');
+
+  if(payload.v===2){
+    // Normalize to the same [exId, rest, groupIdx] triples v1 already used,
+    // so nothing downstream (the preview page, the importer) needs to know
+    // there's more than one payload version at all.
+    payload.e = payload.e
+      .map(entry=>{
+        const def = EXERCISE_DB[entry.i];
+        return def ? [def.id, entry.r!=null?entry.r:null, entry.g!=null?entry.g:null] : null;
+      })
+      .filter(Boolean);
+    return payload;
+  }
+  if(payload.v===1){
+    return payload; // already [exId, rest, groupIdx] triples
+  }
+  throw new Error('Unsupported routine link version');
 }
 function shareableRoutineLink(b64){
   return `${location.origin}${location.pathname}#routine=${b64}`;
