@@ -540,6 +540,7 @@ import {
 
     document.getElementById('btnCameraClose').addEventListener('click', closeCameraCapture);
     document.getElementById('btnCameraFlip').addEventListener('click', flipCameraFacing);
+    document.getElementById('btnCameraMirror').addEventListener('click', toggleCameraMirror);
     document.getElementById('btnCameraZoomOut').addEventListener('click', ()=>applyZoom(currentZoom - zoomStepSize()));
     document.getElementById('btnCameraZoomIn').addEventListener('click', ()=>applyZoom(currentZoom + zoomStepSize()));
     document.getElementById('btnCameraShutter').addEventListener('click', captureCameraFrame);
@@ -1684,6 +1685,7 @@ import {
      as any other check-in. */
   let cameraStream = null;
   let cameraFacingMode = 'user'; // selfie by default, per the ask — flippable to 'environment'
+  let mirrorEnabled = true; // live-preview + captured-photo mirroring; user-togglable via btnCameraMirror
   let pendingPhotoChallenge = null;
   let pendingLocationPromise = null; // resolves to {lat,lng} or null — kicked off at shutter time, read at confirm time
   let capturedPhotoBase64 = null;
@@ -1696,20 +1698,33 @@ import {
     capturedPhotoBase64 = null;
     pendingLocationPromise = null;
     cameraFacingMode = 'user';
+    // Selfie cameras conventionally preview mirrored (like an actual
+    // mirror) — that's the expected default when framing yourself. The
+    // button lets you turn it off if you'd rather see exactly what the
+    // photo will look like.
+    mirrorEnabled = true;
     document.getElementById('cameraTitle').textContent = `Capture a photo — ${ch.title}`;
     document.getElementById('cameraOverlay').style.display = 'flex';
     document.getElementById('cameraTopbar').style.display = '';
     document.getElementById('cameraVideo').style.display = '';
+    document.getElementById('cameraVideo').classList.toggle('camera-mirrored', mirrorEnabled);
     document.getElementById('cameraPreviewImg').style.display = 'none';
     document.getElementById('cameraLiveControls').style.display = '';
     document.getElementById('cameraPreviewControls').style.display = 'none';
     document.getElementById('cameraStatusText').style.display = 'none';
+    document.getElementById('btnCameraMirror').classList.toggle('mirror-on', mirrorEnabled);
     // Shown for the whole live-view step (not just a one-off popup) so it's
     // visible before the browser's own location prompt fires, not after —
     // the person should know what's about to be asked and why, and that
     // declining is fine, before they're staring at a bare system dialog.
     document.getElementById('cameraLocationNote').style.display = ch.requireLocation ? '' : 'none';
     startCameraStream();
+  }
+
+  function toggleCameraMirror(){
+    mirrorEnabled = !mirrorEnabled;
+    document.getElementById('cameraVideo').classList.toggle('camera-mirrored', mirrorEnabled);
+    document.getElementById('btnCameraMirror').classList.toggle('mirror-on', mirrorEnabled);
   }
 
   async function startCameraStream(){
@@ -1784,6 +1799,12 @@ import {
 
   async function flipCameraFacing(){
     cameraFacingMode = cameraFacingMode==='user' ? 'environment' : 'user';
+    // Reasonable per-camera default each time you switch (selfie cameras
+    // conventionally preview mirrored, rear cameras conventionally don't)
+    // — the button still always lets you override it manually afterward.
+    mirrorEnabled = cameraFacingMode==='user';
+    document.getElementById('cameraVideo').classList.toggle('camera-mirrored', mirrorEnabled);
+    document.getElementById('btnCameraMirror').classList.toggle('mirror-on', mirrorEnabled);
     await startCameraStream();
   }
 
@@ -1798,10 +1819,11 @@ import {
     canvas.width = video.videoWidth * scale;
     canvas.height = video.videoHeight * scale;
     const ctx = canvas.getContext('2d');
-    // The front camera's live preview is mirrored (as every selfie camera
-    // is); mirror the captured frame to match, so the sent photo looks the
-    // way the person actually saw themselves while framing it.
-    if(cameraFacingMode==='user'){
+    // Match whatever the live preview was actually showing — the person
+    // composed the shot against the mirrored-or-not toggle state, so the
+    // captured frame should look the same way, not silently differ from
+    // what they saw on screen.
+    if(mirrorEnabled){
       ctx.translate(canvas.width, 0);
       ctx.scale(-1, 1);
     }
