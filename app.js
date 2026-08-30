@@ -9,7 +9,7 @@
 // stale/cached build can be identified at a glance instead of guessing —
 // if what you see on-device doesn't match what should have shipped, this
 // number tells you whether you're actually running the latest code.
-const APP_VERSION = 'v1.42.0';
+const APP_VERSION = 'v1.43.0';
 
 const STORAGE_KEY = 'gymtracker_data_v1';
 const LB_PER_KG = 2.20462;
@@ -1400,6 +1400,12 @@ function renderWorkoutView(){
 
     const exDef = findExercise(ex.exId) || {name:ex.name, met:4.5};
     const isAssisted = !!exDef.assisted;
+    // A static hold (Plank, Side Plank) isn't a rep-based movement — "how
+    // many reps" doesn't mean anything for it, what matters is how long it
+    // was held. Reuses the same numeric field/column, just relabeled and
+    // asking for seconds instead of a rep count, rather than adding a
+    // whole parallel data field for what's still just one number per set.
+    const isHoldBased = !!exDef.holdBased;
     const history = getExerciseHistory(ex.exId);
     const workingSets = ex.sets.filter(s=>!s.warmup);
 
@@ -1439,7 +1445,9 @@ function renderWorkoutView(){
       const last = history[history.length-1];
       if(last.bestSetWeight!=null && last.bestSetReps!=null){
         const assistLabel = isAssisted ? ' assist' : '';
-        lastTimeText = `${kgToDisplay(last.bestSetWeight)}${unitLabel()}${assistLabel} × ${last.bestSetReps}`;
+        lastTimeText = isHoldBased
+          ? `${last.bestSetReps}s held`
+          : `${kgToDisplay(last.bestSetWeight)}${unitLabel()}${assistLabel} × ${last.bestSetReps}`;
       }
     }
 
@@ -1466,13 +1474,13 @@ function renderWorkoutView(){
       ${lastTimeText ? `<div class="last-time-label">Last time: <span class="num">${lastTimeText}</span></div>` : ''}
       ${sparkline ? `<div class="sparkline-row">${sparkline}<span class="sparkline-label">last ${sparkPoints.length} sessions</span>${isPR?'<span class="pr-badge">PR</span>':''}${oneRM!==null?`<span class="one-rm-badge ${isOneRmPR?'is-pr':''}">~${kgToDisplay(Math.round(oneRM*10)/10)}${unitLabel()} 1RM</span>`:''}</div>` : ''}
       <div class="set-headers">
-        <span>#</span><span>${unitLabel()}${isAssisted?' assist':''}</span><span>Reps</span><span>Difficulty</span><span></span>
+        <span>#</span><span>${unitLabel()}${isAssisted?' assist':''}</span><span>${isHoldBased?'Seconds':'Reps'}</span><span>Difficulty</span><span></span>
       </div>
       ${ex.sets.map((set,setIdx)=>`
         <div class="set-row ${set.warmup?'warmup':''}">
           <div class="set-num num" data-toggle-warmup="${exIdx}:${setIdx}" title="Tap to mark as warm-up">${set.warmup?'W':setIdx+1}</div>
           <input type="number" inputmode="decimal" placeholder="0" value="${set.weight===0?'0':(set.weight||'')}" data-set-field="weight" data-ex-idx="${exIdx}" data-set-idx="${setIdx}">
-          <input type="number" inputmode="numeric" placeholder="0" value="${set.reps||''}" data-set-field="reps" data-ex-idx="${exIdx}" data-set-idx="${setIdx}">
+          <input type="number" inputmode="numeric" placeholder="${isHoldBased?'sec':'0'}" value="${set.reps||''}" data-set-field="reps" data-ex-idx="${exIdx}" data-set-idx="${setIdx}">
           <div class="difficulty-group" data-ex-idx="${exIdx}" data-set-idx="${setIdx}">
             <button type="button" class="difficulty-btn ${(set.difficulty||'medium')==='easy'?'active':''}" data-diff="easy">E</button>
             <button type="button" class="difficulty-btn ${(set.difficulty||'medium')==='medium'?'active':''}" data-diff="medium">M</button>
@@ -4107,6 +4115,7 @@ function showSessionDetail(session){
 function renderSessionExerciseCard(ex){
   const exDef = findExercise(ex.exId);
   const isAssisted = !!(exDef && exDef.assisted);
+  const isHoldBased = !!(exDef && exDef.holdBased);
   const isWalk = ex.sets.length===1 && ex.sets[0].isWalk;
   const icon = exDef ? exDef.icon : '🏋️';
 
@@ -4142,7 +4151,7 @@ function renderSessionExerciseCard(ex){
     return `<tr class="${s.warmup?'warmup-row':''}">
       <td class="set-num-cell num">${s.warmup?'W':i+1}</td>
       <td class="num">${wDisplay}</td>
-      <td class="num">${s.reps||'–'}</td>
+      <td class="num">${s.reps ? (isHoldBased ? `${s.reps}s` : s.reps) : '–'}</td>
       <td><span class="session-set-diff-badge ${diffKey}">${diffLabel}</span></td>
     </tr>`;
   }).join('');
@@ -4157,7 +4166,7 @@ function renderSessionExerciseCard(ex){
       <colgroup>
         <col class="col-num"><col class="col-weight"><col class="col-reps"><col class="col-effort">
       </colgroup>
-      <thead><tr><th>#</th><th>${unitLabel()}${isAssisted?' assist':''}</th><th>Reps</th><th>Effort</th></tr></thead>
+      <thead><tr><th>#</th><th>${unitLabel()}${isAssisted?' assist':''}</th><th>${isHoldBased?'Seconds':'Reps'}</th><th>Effort</th></tr></thead>
       <tbody>${rows}</tbody>
     </table>
     ${ex.notes ? `<div class="session-ex-notes">"${ex.notes}"</div>` : ''}
