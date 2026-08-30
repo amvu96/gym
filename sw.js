@@ -1,12 +1,16 @@
 /* Network-first for same-origin app files: always try to fetch the latest
    version first, so code fixes reach the user on next load without needing
-   to remember to bump CACHE_NAME. Falls back to the cached copy only when
-   the network is unavailable (offline at the gym), which is what keeps the
-   app usable without a connection. Cross-origin requests (e.g. Firebase SDK
-   imports from gstatic.com) are left alone entirely — never cached, always
-   fetched normally, since caching third-party CDN code here isn't useful. */
+   to remember to bump CACHE_NAME. The fetch itself uses {cache:'reload'} to
+   bypass the browser's own HTTP cache too, not just this service worker's —
+   otherwise "network-first" could still silently serve a locally-cached
+   response depending on the host's cache headers. Falls back to the cached
+   copy only when the network is unavailable (offline at the gym), which is
+   what keeps the app usable without a connection. Cross-origin requests
+   (e.g. Firebase SDK imports from gstatic.com) are left alone entirely —
+   never cached, always fetched normally, since caching third-party CDN
+   code here isn't useful. */
 
-const CACHE_NAME = 'gym-tracker-cache-v47';
+const CACHE_NAME = 'gym-tracker-cache-v48';
 const ASSETS = [
   './',
   './index.html',
@@ -52,7 +56,13 @@ self.addEventListener('fetch', (event) => {
   if (!url.startsWith(self.location.origin)) return; // let cross-origin requests pass through untouched
 
   event.respondWith(
-    fetch(event.request)
+    // 'reload' forces this fetch to bypass the *browser's own* HTTP cache
+    // (separate from this service worker's Cache Storage) and genuinely
+    // hit the network — without it, "network-first" is only as fresh as
+    // whatever cache headers the host happens to send, which could still
+    // silently hand back a locally-cached response instead of the actual
+    // latest deploy.
+    fetch(event.request, { cache: 'reload' })
       .then((response) => {
         if (response.ok) {
           const clone = response.clone();
