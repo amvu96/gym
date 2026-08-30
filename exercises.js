@@ -72,14 +72,14 @@ const EXERCISE_DB = [
   {"id":"cable-curl","name":"Cable Bicep Curl","muscle":"arms","icon":"💪","type":"strength","met":3.5,"bodyMap":["biceps"],"videoUrl":"https://www.youtube.com/watch?v=xG57S0fgXAk"},
 
   // ---- CORE ----
-  {"id":"plank","name":"Plank","muscle":"core","icon":"🧘","type":"bodyweight","met":3.5,"bodyMap":["abs"],"videoUrl":"https://www.youtube.com/watch?v=pSHjTRCQxIw"},
+  {"id":"plank","name":"Plank","muscle":"core","icon":"🧘","type":"bodyweight","holdBased":true,"met":3.5,"bodyMap":["abs"],"videoUrl":"https://www.youtube.com/watch?v=pSHjTRCQxIw"},
   {"id":"crunches","name":"Crunches","muscle":"core","icon":"🧘","type":"bodyweight","met":3.5,"bodyMap":["abs"],"videoUrl":"https://www.youtube.com/watch?v=Xyd_fa5zoEU"},
   {"id":"hanging-leg-raise","name":"Hanging Leg Raise","muscle":"core","icon":"🧘","type":"bodyweight","met":4.5,"bodyMap":["abs"],"videoUrl":"https://www.youtube.com/watch?v=Pr1ieGZ5atk"},
   {"id":"russian-twist","name":"Russian Twist","muscle":"core","icon":"🧘","type":"bodyweight","met":4.0,"bodyMap":["obliques","abs"],"videoUrl":"https://www.youtube.com/watch?v=JyUqwkVpsi8"},
   {"id":"cable-woodchopper","name":"Cable Woodchopper","muscle":"core","icon":"🧘","type":"strength","met":4.0,"bodyMap":["obliques"],"videoUrl":"https://www.youtube.com/watch?v=9LJ3Qp7k4pA"},
   {"id":"ab-wheel","name":"Ab Wheel Rollout","muscle":"core","icon":"🧘","type":"bodyweight","met":4.5,"bodyMap":["abs"],"videoUrl":"https://www.youtube.com/watch?v=ZWdP0v5nX8M"},
   {"id":"mountain-climbers","name":"Mountain Climbers","muscle":"core","icon":"🧘","type":"bodyweight","met":6.0,"bodyMap":["abs"],"videoUrl":"https://www.youtube.com/watch?v=nmwgirgXLYM"},
-  {"id":"side-plank","name":"Side Plank","muscle":"core","icon":"🧘","type":"bodyweight","met":3.5,"bodyMap":["obliques"],"videoUrl":"https://www.youtube.com/watch?v=K2VljzCC16g"},
+  {"id":"side-plank","name":"Side Plank","muscle":"core","icon":"🧘","type":"bodyweight","holdBased":true,"met":3.5,"bodyMap":["obliques"],"videoUrl":"https://www.youtube.com/watch?v=K2VljzCC16g"},
 
   // ---- CARDIO ----
   {"id":"incline-walk","name":"Incline Treadmill Walk","muscle":"cardio","icon":"🚶","type":"cardio","met":0,"special":"incline_walk","bodyMap":[],"videoUrl":"https://www.youtube.com/watch?v=5W2eQ5c9k8Q"},
