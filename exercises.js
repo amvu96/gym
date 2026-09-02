@@ -70,6 +70,7 @@ const EXERCISE_DB = [
   {"id":"concentration-curl","name":"Concentration Curl","muscle":"arms","icon":"💪","type":"strength","met":3.5,"bodyMap":["biceps"],"videoUrl":"https://www.youtube.com/watch?v=ZcU2hN76UyA"},
   {"id":"preacher-curl","name":"Preacher Curl","muscle":"arms","icon":"💪","type":"strength","met":3.5,"bodyMap":["biceps"],"videoUrl":"https://www.youtube.com/watch?v=fIWP-FRFNU0"},
   {"id":"tricep-pushdown","name":"Tricep Pushdown","muscle":"arms","icon":"💪","type":"strength","met":3.5,"videoUrl":"https://www.youtube.com/watch?v=LXkCrxn3caQ","bodyMap":["triceps"]},
+  {"id":"tricep-kickback-dumbbell","name":"Dumbbell Tricep Kickback","muscle":"arms","icon":"💪","type":"strength","met":3.5,"bodyMap":["triceps"],"videoUrl":"https://www.youtube.com/watch?v=XuH2W_R5YoA"},
   {"id":"tricep-rope-pushdown","name":"Rope Tricep Pushdown","muscle":"arms","icon":"💪","type":"strength","met":3.5,"bodyMap":["triceps"],"videoUrl":"https://www.youtube.com/watch?v=d-ySLTHUgQA"},
   {"id":"tricep-dip","name":"Tricep Dip","muscle":"arms","icon":"💪","type":"bodyweight","met":5.0,"bodyMap":["triceps","chest"],"videoUrl":"https://www.youtube.com/results?search_query=tricep+dips+proper+form"},
   {"id":"skull-crusher","name":"Skull Crusher","muscle":"arms","icon":"💪","type":"strength","met":3.5,"bodyMap":["triceps"],"videoUrl":"https://www.youtube.com/watch?v=kOXVmFFTcio"},
